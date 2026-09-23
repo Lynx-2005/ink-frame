@@ -1,11 +1,15 @@
 #pragma once
 // Selection tools: rectangle, ellipse and freehand lasso. They all share the
 // drag-preview + commit-to-mask lifecycle; the mask itself lives on the
-// document, so painting and filling are clipped by it.
+// document, so painting and filling are clipped by it. The lasso can run in
+// smart mode, where the outline snaps to nearby drawn edges.
+#include "core/InkMagnetic.h"
 #include "core/InkSelection.h"
 #include "ui/tools/InkTool.h"
 #include <QPainterPath>
 #include <vector>
+
+class QHBoxLayout;
 
 namespace ink {
 
@@ -31,8 +35,12 @@ protected:
     virtual QPainterPath previewPath() const = 0;
     // Final polygon (document space, implicitly closed); < 3 points = click.
     virtual std::vector<Vec2> polygon() const = 0;
+    // Tool-specific controls appended to the shared options row.
+    virtual void addExtraOptions(QHBoxLayout *row, QWidget *page);
 
     SelectionAction effectiveAction(Qt::KeyboardModifiers mods) const;
+    Rect documentRect() const;
+    ToolContext *context() const { return ctx_; }
 
     bool dragging_{false};
     Vec2 start_{}, current_{};
@@ -62,10 +70,24 @@ protected:
 class LassoSelectTool : public SelectionToolBase {
 public:
     QString id() const override { return QStringLiteral("lasso"); }
+    void beginPrimary(const ToolEvent &e) override;
+    void continuePrimary(const ToolEvent &e) override;
+    QString statusHint() const override {
+        return smart_ ? QStringLiteral("Smart snap: drag roughly around the drawing, the outline clings to its edges")
+                      : QStringLiteral("Drag to select · Shift adds · Alt subtracts · Ctrl intersects");
+    }
 
 protected:
     QPainterPath previewPath() const override;
     std::vector<Vec2> polygon() const override;
+    void addExtraOptions(QHBoxLayout *row, QWidget *page) override;
+
+private:
+    void appendSnapped(const Vec2 &to);
+
+    bool smart_{false};
+    int snapRadius_{10};
+    MagneticField field_;
 };
 
 // Shared helpers for the shell actions (Select All / Deselect / Invert).

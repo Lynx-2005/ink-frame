@@ -3,6 +3,7 @@
 // the Krita/Photoshop split (lasso selects, move tool moves the pixels).
 // Alt leaves a copy behind, Shift constrains to one axis, arrows nudge.
 #include "core/InkRegion.h"
+#include "core/InkSelection.h"
 #include "ui/tools/InkTool.h"
 
 namespace ink {
@@ -40,6 +41,7 @@ private:
     ToolContext *ctx_{nullptr};
     PaintDevice *device_{nullptr};
     FloatRegion lifted_;
+    Selection eraseMask_; // mask as it was when the drag started
     TileMemento memento_;
     Rect area_{};
     bool dragging_{false};

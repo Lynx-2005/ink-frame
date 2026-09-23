@@ -1,4 +1,5 @@
 #include "ui/tools/InkSelectionTools.h"
+#include "ui/InkDocument.h"
 #include "ui/InkOptionWidgets.h"
 #include "ui/tools/InkToolContext.h"
 #include <QComboBox>
@@ -136,8 +137,22 @@ QWidget *SelectionToolBase::createOptionsWidget(QWidget *parent) {
     auto *hint = new QLabel(QStringLiteral("Shift add · Alt subtract · Ctrl intersect"), page);
     hint->setObjectName(QStringLiteral("OptHint"));
     row->addWidget(hint);
+
+    addExtraOptions(row, page);
     row->addStretch(1);
     return page;
+}
+
+void SelectionToolBase::addExtraOptions(QHBoxLayout *row, QWidget *page) {
+    Q_UNUSED(row);
+    Q_UNUSED(page);
+}
+
+Rect SelectionToolBase::documentRect() const {
+    if (!ctx_)
+        return {};
+    const Image &img = ctx_->doc()->image();
+    return {0, 0, img.width(), img.height()};
 }
 
 // --- rectangle ---
@@ -188,6 +203,85 @@ QPainterPath LassoSelectTool::previewPath() const {
 }
 
 std::vector<Vec2> LassoSelectTool::polygon() const { return path_; }
+
+// Smart mode: sample the drawing once per stroke, then let the outline cling
+// to nearby edges instead of following the raw hand path.
+void LassoSelectTool::beginPrimary(const ToolEvent &e) {
+    if (!ctx_)
+        return;
+    if (smart_) {
+        PaintDevice projection;
+        ctx_->doc()->image().project(ctx_->doc()->currentFrame(), projection);
+        field_.build(projection, documentRect());
+    } else {
+        field_ = MagneticField{};
+    }
+    SelectionToolBase::beginPrimary(e);
+    if (smart_ && field_.valid() && !path_.empty()) {
+        Vec2 snapped;
+        if (field_.snap(path_.back().x, path_.back().y, snapRadius_, snapped))
+            path_.back() = snapped;
+    }
+}
+
+void LassoSelectTool::continuePrimary(const ToolEvent &e) {
+    if (!dragging_)
+        return;
+    if (!smart_ || !field_.valid()) {
+        SelectionToolBase::continuePrimary(e);
+        return;
+    }
+    Vec2 target = e.docPos;
+    Vec2 snapped;
+    if (field_.snap(target.x, target.y, snapRadius_, snapped))
+        target = snapped;
+    appendSnapped(target);
+    ctx_->requestRepaint();
+}
+
+void LassoSelectTool::appendSnapped(const Vec2 &to) {
+    if (path_.empty()) {
+        path_.push_back(to);
+        return;
+    }
+    const Vec2 from = path_.back();
+    const double dx = to.x - from.x, dy = to.y - from.y;
+    const double len = std::hypot(dx, dy);
+    if (len < 1.0)
+        return;
+    // Sub-sample the step so each piece can be pulled onto the edge; the
+    // result hugs the drawing instead of cutting across it.
+    const int steps = std::max(1, int(len / 3.0));
+    for (int i = 1; i <= steps; ++i) {
+        Vec2 p{from.x + dx * double(i) / double(steps), from.y + dy * double(i) / double(steps)};
+        Vec2 fine;
+        if (field_.snap(p.x, p.y, snapRadius_ * 0.5, fine))
+            p = fine;
+        if (std::hypot(p.x - path_.back().x, p.y - path_.back().y) >= 1.0)
+            path_.push_back(p);
+    }
+}
+
+void LassoSelectTool::addExtraOptions(QHBoxLayout *row, QWidget *page) {
+    row->addWidget(InkOptions::separator(page));
+    auto *smart = InkOptions::toggle(QStringLiteral("Smart snap"), smart_, page);
+    smart->setToolTip(QStringLiteral("Snap the outline to nearby drawn edges"));
+    connect(smart, &QToolButton::toggled, page, [this](bool on) {
+        smart_ = on;
+        if (ctx_)
+            ctx_->setStatus(statusHint());
+    });
+    row->addWidget(smart);
+
+    auto *radius = InkOptions::slider(2, 28, snapRadius_, page, 70);
+    auto *radiusValue = InkOptions::value(QStringLiteral("%1 px").arg(snapRadius_), page, 40);
+    InkOptions::addField(row, QStringLiteral("SNAP"), radius);
+    row->addWidget(radiusValue);
+    connect(radius, &QSlider::valueChanged, page, [this, radiusValue](int v) {
+        snapRadius_ = v;
+        radiusValue->setText(QStringLiteral("%1 px").arg(v));
+    });
+}
 
 // --- shell actions (Select All / Deselect / Invert) ---
 void selectAll(ToolContext &ctx) {

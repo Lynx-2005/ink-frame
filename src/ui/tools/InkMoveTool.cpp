@@ -20,6 +20,7 @@ void MoveTool::deactivate() { cancelPrimary(); }
 
 void MoveTool::resetState() {
     lifted_ = FloatRegion{};
+    eraseMask_ = Selection{};
     memento_ = TileMemento{};
     device_ = nullptr;
     area_ = Rect{};
@@ -57,7 +58,14 @@ bool MoveTool::grab(bool useSelection) {
     if (area_.isEmpty())
         return false;
     lifted_ = liftRegion(*device_, area_, selectionScope_ ? mask() : nullptr);
-    return !lifted_.empty();
+    if (lifted_.empty())
+        return false;
+    if (selectionScope_) {
+        // Snapshot the mask: the live one is translated every drag frame, but
+        // the source pixels have to be erased where they still are.
+        eraseMask_ = ctx_->selection();
+    }
+    return true;
 }
 
 bool MoveTool::grabAt(const Vec2 &at) {
@@ -110,7 +118,7 @@ void MoveTool::applyOffset(int dx, int dy) {
     memento_ = TileMemento{};
     Rect dirty;
     if (!copying_)
-        dirty = eraseRegion(*device_, area_, selectionScope_ ? mask() : nullptr, &memento_);
+        dirty = eraseRegion(*device_, area_, selectionScope_ ? &eraseMask_ : nullptr, &memento_);
     dirty = uniteRect(dirty, stampRegion(*device_, lifted_, dx, dy, documentRect(), &memento_));
     const int stepX = dx - offsetX_, stepY = dy - offsetY_;
     if (selectionScope_ && (stepX || stepY)) {
@@ -174,7 +182,7 @@ void MoveTool::flip(bool horizontal) {
     if (!grab(!ctx_->selection().isEmpty()))
         return;
     const FloatRegion mirrored = flipRegion(lifted_, horizontal);
-    Rect dirty = eraseRegion(*device_, area_, selectionScope_ ? mask() : nullptr, &memento_);
+    Rect dirty = eraseRegion(*device_, area_, selectionScope_ ? &eraseMask_ : nullptr, &memento_);
     dirty = uniteRect(dirty, stampRegion(*device_, mirrored, 0, 0, documentRect(), &memento_));
     if (selectionScope_)
         ctx_->selection().mirror(horizontal);
