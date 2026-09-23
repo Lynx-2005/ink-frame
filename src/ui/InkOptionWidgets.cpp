@@ -63,6 +63,15 @@ QToolButton *toggle(const QString &text, bool checked, QWidget *parent) {
     return b;
 }
 
+QToolButton *button(const QString &text, QWidget *parent) {
+    auto *b = new QToolButton(parent);
+    b->setObjectName(QStringLiteral("OptToggle"));
+    b->setText(text);
+    b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    b->setFocusPolicy(Qt::NoFocus);
+    return b;
+}
+
 QFrame *separator(QWidget *parent) {
     auto *f = new QFrame(parent);
     f->setObjectName(QStringLiteral("OptSep"));

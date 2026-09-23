@@ -41,6 +41,54 @@ void Selection::invert() {
     outlineDirty_ = true;
 }
 
+void Selection::translate(int dx, int dy) {
+    if (empty_ || (dx == 0 && dy == 0))
+        return;
+    std::vector<uint8_t> shifted(mask_.size(), 0);
+    for (int y = 0; y < h_; ++y) {
+        const int ny = y + dy;
+        if (ny < 0 || ny >= h_)
+            continue;
+        for (int x = 0; x < w_; ++x) {
+            const uint8_t c = mask_[size_t(y) * size_t(w_) + size_t(x)];
+            if (c == 0)
+                continue;
+            const int nx = x + dx;
+            if (nx < 0 || nx >= w_)
+                continue;
+            shifted[size_t(ny) * size_t(w_) + size_t(nx)] = c;
+        }
+    }
+    mask_.swap(shifted);
+    bounds_ = intersectRect({bounds_.x + dx, bounds_.y + dy, bounds_.w, bounds_.h}, {0, 0, w_, h_});
+    if (!outlineDirty_) {
+        for (auto &seg : outline_) {
+            seg[0] += float(dx);
+            seg[1] += float(dy);
+            seg[2] += float(dx);
+            seg[3] += float(dy);
+        }
+    }
+}
+
+void Selection::mirror(bool horizontal) {
+    if (empty_ || bounds_.isEmpty())
+        return;
+    auto at = [&](int x, int y) -> uint8_t & {
+        return mask_[size_t(y) * size_t(w_) + size_t(x)];
+    };
+    if (horizontal) {
+        for (int y = bounds_.y; y < bounds_.y + bounds_.h; ++y)
+            for (int i = 0; i < bounds_.w / 2; ++i)
+                std::swap(at(bounds_.x + i, y), at(bounds_.x + bounds_.w - 1 - i, y));
+    } else {
+        for (int x = bounds_.x; x < bounds_.x + bounds_.w; ++x)
+            for (int i = 0; i < bounds_.h / 2; ++i)
+                std::swap(at(x, bounds_.y + i), at(x, bounds_.y + bounds_.h - 1 - i));
+    }
+    outlineDirty_ = true;
+}
+
 void Selection::recomputeBounds() {
     int x0 = w_, y0 = h_, x1 = -1, y1 = -1;
     for (int y = 0; y < h_; ++y) {

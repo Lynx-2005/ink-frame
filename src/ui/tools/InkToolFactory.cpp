@@ -1,6 +1,7 @@
 #include "ui/tools/InkToolFactory.h"
 #include "ui/tools/InkColorPickerTool.h"
 #include "ui/tools/InkFillTool.h"
+#include "ui/tools/InkMoveTool.h"
 #include "ui/tools/InkPaintTool.h"
 #include "ui/tools/InkSelectionTools.h"
 #include "ui/tools/InkShapeTools.h"
@@ -140,6 +141,17 @@ void registerBuiltinTools() {
     lasso.priority = 2;
     lasso.create = [] { return new LassoSelectTool(); };
     reg.add(lasso);
+
+    // The selection tools define the region; this is what drags the pixels.
+    ToolFactory move;
+    move.id = QStringLiteral("move");
+    move.name = QStringLiteral("Move");
+    move.section = ToolSections::transform();
+    move.icon = IconId::Move;
+    move.shortcut = QKeySequence(Qt::Key_V);
+    move.priority = 0;
+    move.create = [] { return new MoveTool(); };
+    reg.add(move);
 }
 
 } // namespace ink

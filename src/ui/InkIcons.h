@@ -11,7 +11,7 @@ namespace ink {
 
 enum class IconId {
     // tools, in toolbox order
-    Brush, Eraser, Fill, Picker, Line, Rectangle, Ellipse,
+    Brush, Eraser, Fill, Picker, Move, Line, Rectangle, Ellipse,
     SelectRect, SelectEllipse, Lasso,
     Swap, ResetColor,
     // layer / timeline chrome

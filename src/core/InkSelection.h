@@ -37,6 +37,12 @@ public:
     // Axis-aligned boundary runs for the marching-ants overlay, in document
     // space. Cached; rebuilt when the mask changes.
     const std::vector<std::array<float, 4>> &outline();
+    void invalidateOutline() { outlineDirty_ = true; }
+
+    // Whole-mask edits used while dragging a lifted region: the cached outline
+    // travels with the mask so a drag does not rescan it.
+    void translate(int dx, int dy);
+    void mirror(bool horizontal);
 
 private:
     void recomputeBounds();

@@ -42,6 +42,10 @@ public:
     void move(const ToolEvent &e);
     void release(const ToolEvent &e);
     void cancel();
+    // Arrow keys: forwarded to the active tool, true when it consumed them.
+    bool nudge(int dx, int dy, Qt::KeyboardModifiers mods);
+    // Mirror the active region (move tool).
+    void flipSelection(bool horizontal);
 
     // Options widget for a tool, created once and cached so slider state
     // survives tool switching.

@@ -431,6 +431,22 @@ void CanvasWidget::keyPressEvent(QKeyEvent *e) {
         update();
         return;
     }
+    // Arrow keys nudge the active tool (the move tool shifts its content).
+    {
+        int dx = 0, dy = 0;
+        switch (e->key()) {
+        case Qt::Key_Left: dx = -1; break;
+        case Qt::Key_Right: dx = 1; break;
+        case Qt::Key_Up: dy = -1; break;
+        case Qt::Key_Down: dy = 1; break;
+        default: break;
+        }
+        if ((dx || dy) && tools_) {
+            const int step = (e->modifiers() & Qt::ShiftModifier) ? 10 : 1;
+            if (tools_->nudge(dx * step, dy * step, e->modifiers()))
+                return;
+        }
+    }
     if (e->key() == Qt::Key_Plus || e->key() == Qt::Key_Equal) {
         view_.zoomAtCenter(1.15);
         update();

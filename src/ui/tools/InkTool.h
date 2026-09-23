@@ -56,6 +56,15 @@ public:
     virtual void continuePrimary(const ToolEvent &) {}
     virtual void endPrimary(const ToolEvent &) {}
     virtual void cancelPrimary() {}
+    // Arrow-key nudging; return true when the tool consumed the key.
+    virtual bool nudge(int dx, int dy, Qt::KeyboardModifiers mods) {
+        Q_UNUSED(dx);
+        Q_UNUSED(dy);
+        Q_UNUSED(mods);
+        return false;
+    }
+    // Mirror the current region (selection contents, else the layer).
+    virtual void flipSelection(bool horizontal) { Q_UNUSED(horizontal); }
 
     // true while this tool has uncommitted edits on a device: the canvas
     // must bypass its frame cache so dabs show up live.

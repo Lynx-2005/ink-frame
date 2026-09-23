@@ -188,6 +188,34 @@ void p_picker(QPainter &p, const QRectF &r, const QColor &c) {
     p.restore();
 }
 
+// Move: four-way arrow cross.
+void p_move(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawLine(QPointF(12.0, 6.0), QPointF(12.0, 18.0));
+    p.drawLine(QPointF(6.0, 12.0), QPointF(18.0, 12.0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    const QPointF heads[4][3] = {
+        {{12.0, 3.4}, {9.5, 6.6}, {14.5, 6.6}},
+        {{12.0, 20.6}, {9.5, 17.4}, {14.5, 17.4}},
+        {{3.4, 12.0}, {6.6, 9.5}, {6.6, 14.5}},
+        {{20.6, 12.0}, {17.4, 9.5}, {17.4, 14.5}},
+    };
+    for (const auto &head : heads) {
+        QPainterPath tri;
+        tri.moveTo(head[0]);
+        tri.lineTo(head[1]);
+        tri.lineTo(head[2]);
+        tri.closeSubpath();
+        p.drawPath(tri);
+    }
+    p.restore();
+}
+
 void p_swap(QPainter &p, const QRectF &r, const QColor &c) {
     p.save();
     grid24(p, r);
@@ -611,6 +639,7 @@ PaintFn fnFor(IconId id) {
     case IconId::Eraser: return p_eraser;
     case IconId::Fill: return p_fill;
     case IconId::Picker: return p_picker;
+    case IconId::Move: return p_move;
     case IconId::Line: return p_line;
     case IconId::Rectangle: return p_rectangle;
     case IconId::Ellipse: return p_ellipse;
@@ -689,7 +718,7 @@ QIcon InkIcons::get(IconId id, const QColor &color, int size) {
     icon.addPixmap(render(id, dis, size), QIcon::Disabled, QIcon::Off);
     if (id == IconId::Play || id == IconId::Pause || id == IconId::Brush ||
         id == IconId::Eraser || id == IconId::Line || id == IconId::Rectangle ||
-        id == IconId::Ellipse || id == IconId::Picker ||
+        id == IconId::Ellipse || id == IconId::Picker || id == IconId::Move ||
         id == IconId::Onion) {
         icon.addPixmap(render(id, InkTheme::toolGlyphOn(), size), QIcon::Normal, QIcon::On);
     }

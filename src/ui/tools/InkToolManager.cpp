@@ -139,8 +139,20 @@ void ToolManager::release(const ToolEvent &e) {
 }
 
 void ToolManager::cancel() {
-    if (Tool *t = activeTool())
+    Tool *t = activeTool();
+    if (t)
         t->cancelPrimary();
+    emit statusChanged(t ? t->statusHint() : QString());
+}
+
+bool ToolManager::nudge(int dx, int dy, Qt::KeyboardModifiers mods) {
+    Tool *t = activeTool();
+    return t && t->nudge(dx, dy, mods);
+}
+
+void ToolManager::flipSelection(bool horizontal) {
+    if (Tool *t = activeTool())
+        t->flipSelection(horizontal);
 }
 
 QWidget *ToolManager::optionsWidget(const QString &id, QWidget *parent) {

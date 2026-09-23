@@ -20,6 +20,7 @@ inline QString paint() { return QStringLiteral("0 Paint"); }
 inline QString fill() { return QStringLiteral("1 Fill"); }
 inline QString shape() { return QStringLiteral("2 Shape"); }
 inline QString select() { return QStringLiteral("3 Select"); }
+inline QString transform() { return QStringLiteral("4 Transform"); }
 } // namespace ToolSections
 
 struct ToolFactory {

@@ -23,6 +23,7 @@ QComboBox *combo(const QStringList &items, QWidget *parent, int width = 118);
 // Checkable toggle: empty-box glyph when off, check glyph when on (both are
 // code-drawn icons, so the state stays legible without asset files).
 QToolButton *toggle(const QString &text, bool checked, QWidget *parent);
+QToolButton *button(const QString &text, QWidget *parent);
 // 1px vertical divider between option clusters.
 QFrame *separator(QWidget *parent);
 // caption + control, appended to a row layout.
