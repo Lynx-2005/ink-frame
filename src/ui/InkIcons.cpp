@@ -12,105 +12,144 @@ namespace {
 
 using PaintFn = void (*)(QPainter &, const QRectF &, const QColor &);
 
+// Tool glyphs share one design grid: a 24x24 box with a 2px safe margin,
+// 1.6-unit strokes and round joins. The grid is scaled onto whatever paint
+// rect the renderer hands over, so 16px and 24px renders stay consistent.
+void grid24(QPainter &p, const QRectF &r) {
+    const double s = r.width() / 24.0;
+    p.translate(r.left(), r.top());
+    p.scale(s, s);
+}
+
+const QPen &strokePen(const QColor &c) {
+    static QPen pen;
+    pen = QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    return pen;
+}
+
 void p_brush(QPainter &p, const QRectF &r, const QColor &c) {
-    // diagonal brush: handle line + ferrule + tip triangle
     p.save();
-    p.translate(r.center());
-    p.rotate(-45);
-    double w = r.width(), h = r.height();
-    p.setPen(Qt::NoPen);
-    p.setBrush(c);
-    p.drawRoundedRect(QRectF(-w * 0.08, -h * 0.46, w * 0.16, h * 0.42), 2, 2); // handle
-    p.setBrush(c.darker(130));
-    p.drawRect(QRectF(-w * 0.11, -h * 0.06, w * 0.22, h * 0.12)); // ferrule
+    grid24(p, r);
+    // handle -> ferrule -> bristle wedge, pointing bottom-left
+    p.setPen(QPen(c, 2.6, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(19.2, 4.4), QPointF(13.6, 10.0));
+    p.setPen(QPen(c, 3.4, Qt::SolidLine, Qt::FlatCap));
+    p.drawLine(QPointF(13.2, 10.4), QPointF(11.8, 11.8));
     QPainterPath tip;
-    tip.moveTo(-w * 0.11, h * 0.06);
-    tip.lineTo(w * 0.11, h * 0.06);
-    tip.lineTo(0, h * 0.46);
+    tip.moveTo(10.9, 10.8);
+    tip.lineTo(14.1, 14.0);
+    tip.lineTo(4.4, 19.6);
     tip.closeSubpath();
-    p.fillPath(tip, c);
+    p.setPen(strokePen(c));
+    p.setBrush(c);
+    p.drawPath(tip);
     p.restore();
 }
 
 void p_eraser(QPainter &p, const QRectF &r, const QColor &c) {
     p.save();
-    p.translate(r.center());
-    p.rotate(-20);
-    double w = r.width(), h = r.height();
-    p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.setBrush(c);
-    p.setOpacity(0.92);
-    QPainterPath body;
-    body.moveTo(-w * 0.34, -h * 0.05);
-    body.lineTo(w * 0.05, -h * 0.05);
-    body.lineTo(w * 0.34, h * 0.24);
-    body.lineTo(-w * 0.05, h * 0.24);
-    body.closeSubpath();
-    p.fillPath(body, c);
-    p.drawPath(body);
+    grid24(p, r);
+    p.setPen(strokePen(c));
+    p.setBrush(Qt::NoBrush);
+    p.save();
+    p.translate(11.8, 10.8);
+    p.rotate(-38);
+    p.drawRoundedRect(QRectF(-7.2, -4.7, 14.4, 9.4), 1.8, 1.8);
+    p.drawLine(QPointF(-1.6, -4.7), QPointF(-1.6, 4.7)); // ferrule split
+    p.restore();
+    p.drawLine(QPointF(4.2, 20.0), QPointF(19.8, 20.0)); // baseline
     p.restore();
 }
 
-void p_shape(QPainter &p, const QRectF &r, const QColor &c) {
-    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap));
-    p.setBrush(Qt::NoBrush);
-    p.drawEllipse(r.adjusted(2, 2, -2, -2));
-    p.setBrush(c);
+void p_line(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(5.4, 18.6), QPointF(18.6, 5.4));
     p.setPen(Qt::NoPen);
-    p.drawEllipse(r.adjusted(2, 2, -2, -2).topLeft() + QPointF(-1, -1), 2.4, 2.4);
+    p.setBrush(c);
+    p.drawEllipse(QPointF(5.4, 18.6), 1.9, 1.9);
+    p.drawEllipse(QPointF(18.6, 5.4), 1.9, 1.9);
+    p.restore();
+}
+
+void p_rectangle(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(QRectF(4.6, 6.6, 14.8, 10.8), 1.6, 1.6);
+    p.restore();
+}
+
+void p_ellipse(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPointF(12.0, 12.0), 7.6, 6.2);
+    p.restore();
 }
 
 void p_picker(QPainter &p, const QRectF &r, const QColor &c) {
-    // eyedropper: bulb circle + stem + drop
-    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.setBrush(Qt::NoBrush);
-    p.drawEllipse(QPointF(r.center().x() - 2, r.center().y() - 4), 5, 5);
-    p.drawLine(QPointF(r.center().x() + 2, r.center().y()), QPointF(r.center().x() + 6, r.center().y() + 7));
+    p.drawLine(QPointF(4.8, 19.2), QPointF(13.0, 11.0)); // stem
+    p.save();
+    p.translate(15.8, 8.2);
+    p.rotate(-45);
+    p.drawRoundedRect(QRectF(-4.3, -3.4, 8.6, 6.8), 2.0, 2.0); // bulb
+    p.restore();
     p.setPen(Qt::NoPen);
     p.setBrush(c);
-    QPainterPath drop;
-    QPointF dc(r.center().x() + 6, r.center().y() + 5);
-    drop.moveTo(dc.x(), dc.y() - 4);
-    drop.lineTo(dc.x() + 3, dc.y() + 2);
-    drop.quadTo(dc.x(), dc.y() + 5, dc.x() - 3, dc.y() + 2);
-    drop.closeSubpath();
-    p.fillPath(drop, c);
+    p.drawEllipse(QPointF(15.8, 8.2), 1.4, 1.4);
+    p.restore();
 }
 
-void p_text(QPainter &p, const QRectF &r, const QColor &c) {
-    p.setPen(QPen(c, 2.4, Qt::SolidLine, Qt::RoundCap));
-    p.drawLine(QPointF(r.left() + 3, r.top() + 3), QPointF(r.right() - 3, r.top() + 3));
-    p.drawLine(QPointF(r.center().x(), r.top() + 3), QPointF(r.center().x(), r.bottom() - 3));
-    p.drawLine(QPointF(r.center().x() - 4, r.bottom() - 3), QPointF(r.center().x() + 4, r.bottom() - 3));
+void p_swap(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.drawLine(QPointF(8.8, 8.0), QPointF(17.0, 8.0));
+    p.drawLine(QPointF(15.2, 16.0), QPointF(7.0, 16.0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    QPainterPath left;
+    left.moveTo(3.6, 8.0);
+    left.lineTo(8.8, 5.0);
+    left.lineTo(8.8, 11.0);
+    left.closeSubpath();
+    p.drawPath(left);
+    QPainterPath right;
+    right.moveTo(20.4, 16.0);
+    right.lineTo(15.2, 13.0);
+    right.lineTo(15.2, 19.0);
+    right.closeSubpath();
+    p.drawPath(right);
+    p.restore();
 }
 
-void p_note(QPainter &p, const QRectF &r, const QColor &c) {
-    QRectF b = r.adjusted(3, 4, -3, -5);
+void p_resetColor(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
     p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(b, 3, 3);
-    QPainterPath tail;
-    tail.moveTo(b.left() + 4, b.bottom());
-    tail.lineTo(b.left() + 4, b.bottom() + 4);
-    tail.lineTo(b.left() + 9, b.bottom());
-    tail.closeSubpath();
-    p.setBrush(c);
+    p.drawRect(QRectF(3.8, 3.8, 9.4, 9.4));
     p.setPen(Qt::NoPen);
-    p.fillPath(tail, c);
     p.setBrush(c);
-    p.drawEllipse(QPointF(b.center().x() - 3, b.center().y()), 1.3, 1.3);
-    p.drawEllipse(QPointF(b.center().x() + 3, b.center().y()), 1.3, 1.3);
+    p.drawRect(QRectF(11.4, 11.4, 9.4, 9.4));
+    p.restore();
 }
 
-void p_select(QPainter &p, const QRectF &r, const QColor &c) {
-    p.setPen(QPen(c, 1.8, Qt::DashLine, Qt::RoundCap));
+void p_checkBox(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.setBrush(Qt::NoBrush);
-    p.drawRect(r.adjusted(3, 3, -3, -3));
-    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::SquareCap));
-    for (auto pt : {r.adjusted(3, 3, -3, -3).topLeft(), r.adjusted(3, 3, -3, -3).topRight(),
-                    r.adjusted(3, 3, -3, -3).bottomLeft(), r.adjusted(3, 3, -3, -3).bottomRight()}) {
-        p.drawPoint(pt);
-    }
+    p.drawRoundedRect(QRectF(4.0, 4.0, 16.0, 16.0), 3.0, 3.0);
+    p.restore();
 }
 
 void p_eye(QPainter &p, const QRectF &r, const QColor &c) {
@@ -490,11 +529,12 @@ PaintFn fnFor(IconId id) {
     switch (id) {
     case IconId::Brush: return p_brush;
     case IconId::Eraser: return p_eraser;
-    case IconId::Shape: return p_shape;
+    case IconId::Line: return p_line;
+    case IconId::Rectangle: return p_rectangle;
+    case IconId::Ellipse: return p_ellipse;
     case IconId::Picker: return p_picker;
-    case IconId::Text: return p_text;
-    case IconId::Note: return p_note;
-    case IconId::Select: return p_select;
+    case IconId::Swap: return p_swap;
+    case IconId::ResetColor: return p_resetColor;
     case IconId::Eye: return p_eye;
     case IconId::EyeOff: return p_eyeOff;
     case IconId::Lock: return p_lock;
@@ -511,6 +551,7 @@ PaintFn fnFor(IconId id) {
     case IconId::Minus: return p_minus;
     case IconId::Close: return p_close;
     case IconId::Check: return p_check;
+    case IconId::CheckBox: return p_checkBox;
     case IconId::Onion: return p_onion;
     case IconId::Loop: return p_loop;
     case IconId::Once: return p_once;
@@ -550,7 +591,7 @@ QPixmap render(IconId id, const QColor &color, int size) {
 } // namespace
 
 QIcon InkIcons::get(IconId id, int size, bool active) {
-    QColor c = active ? InkTheme::accent() : InkTheme::text();
+    QColor c = active ? InkTheme::accent() : InkTheme::toolGlyph();
     return get(id, c, size);
 }
 
@@ -561,10 +602,10 @@ QIcon InkIcons::get(IconId id, const QColor &color, int size) {
     dis.setAlpha(110);
     icon.addPixmap(render(id, dis, size), QIcon::Disabled, QIcon::Off);
     if (id == IconId::Play || id == IconId::Pause || id == IconId::Brush ||
-        id == IconId::Eraser || id == IconId::Shape || id == IconId::Picker ||
-        id == IconId::Text || id == IconId::Note || id == IconId::Select ||
+        id == IconId::Eraser || id == IconId::Line || id == IconId::Rectangle ||
+        id == IconId::Ellipse || id == IconId::Picker ||
         id == IconId::Onion) {
-        icon.addPixmap(render(id, InkTheme::accent(), size), QIcon::Normal, QIcon::On);
+        icon.addPixmap(render(id, InkTheme::toolGlyphOn(), size), QIcon::Normal, QIcon::On);
     }
     return icon;
 }

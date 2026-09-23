@@ -1,30 +1,36 @@
 #include "ui/InkMainWindow.h"
 #include "io/InkProject.h"
-#include "resources/InkResources.h"
 #include "ui/InkCanvasWidget.h"
 #include "ui/InkDocument.h"
 #include "ui/InkTheme.h"
 #include "ui/InkTimelineDock.h"
-#include "ui/InkToolOptions.h"
-#include "ui/InkToolRail.h"
+#include "ui/InkToolBox.h"
+#include "ui/InkToolOptionsBar.h"
 #include "ui/InkTopBar.h"
-#include <QDockWidget>
+#include "ui/tools/InkToolContext.h"
+#include "ui/tools/InkToolManager.h"
+#include <QAction>
 #include <QDir>
 #include <QFileDialog>
 #include <QMenuBar>
 #include <QProcess>
-#include <QSplitter>
 #include <QVBoxLayout>
 
 namespace ink {
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setStyleSheet(InkTheme::styleSheet());
+    setWindowTitle(QStringLiteral("Kōsei — InkFrame"));
     doc_ = new Document(1920, 1080, 12); // concept art runs 12 fps
-    canvas_ = new CanvasWidget(doc_, this);
 
-    ResourceDb db = ResourceDb::defaults();
-    canvas_->setBrushPreset(*db.find("ink_pen"));
+    // --- tool system: context owns settings, manager owns the active tool ---
+    toolCtx_ = new ToolContext(doc_, this);
+    tools_ = new ToolManager(toolCtx_, this);
+    canvas_ = new CanvasWidget(doc_, this);
+    canvas_->setToolContext(toolCtx_);
+    canvas_->setToolManager(tools_);
+    for (QAction *action : tools_->windowActions())
+        addAction(action); // shortcuts stay live while the canvas has focus
 
     // --- top bar ---
     topBar_ = new TopBar(this);
@@ -33,24 +39,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(topBar_, &TopBar::zoomPicked, this, &MainWindow::onZoomPicked);
     connect(topBar_, &TopBar::menuRequested, this, [this] { menuBar()->setVisible(!menuBar()->isVisible()); });
 
-    // --- left tool rail ---
-    rail_ = new ToolRail(this);
-    connect(rail_, &ToolRail::toolChanged, this, [this](ToolId t) { onToolChanged(int(t)); });
-    connect(rail_, &ToolRail::colorsChanged, this, &MainWindow::onColorsChanged);
-
-    // --- center layout: rail | canvas ---
+    // --- toolbox | canvas card ---
+    toolBox_ = new ToolBox(tools_, toolCtx_, this);
     auto *center = new QWidget(this);
     auto *hl = new QHBoxLayout(center);
     hl->setContentsMargins(8, 8, 8, 8);
     hl->setSpacing(8);
-    hl->addWidget(rail_);
+    hl->addWidget(toolBox_);
     auto *canvasCard = new QWidget(center);
     canvasCard->setObjectName(QStringLiteral("Card"));
     auto *cl = new QVBoxLayout(canvasCard);
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(0);
-    toolOpts_ = new ToolOptions(canvasCard);
-    toolOpts_->setBrushSize(canvas_->brushSize());
+    toolOpts_ = new ToolOptionsBar(tools_, canvasCard);
     cl->addWidget(toolOpts_);
     cl->addWidget(canvas_, 1);
     hl->addWidget(canvasCard, 1);
@@ -80,49 +81,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(timeline_, &TimelineDock::onionChanged, this, [this] { canvas_->markDirty(); });
     connect(timeline_, &TimelineDock::keyChanged, this, [this] { timeline_->refresh(); canvas_->markDirty(); });
     connect(timeline_, &TimelineDock::layersChanged, this, [this] { timeline_->refresh(); canvas_->markDirty(); });
-    connect(canvas_, &CanvasWidget::strokeFinished, this, [this] {
-        timeline_->refreshContent(); canvas_->markDirty();
-    });
     connect(canvas_, &CanvasWidget::viewChanged, this, &MainWindow::onViewChanged);
-    connect(toolOpts_, &ToolOptions::brushSizeChanged, this, [this](double px) { canvas_->setBrushSize(px); });
-    connect(toolOpts_, &ToolOptions::shapeModeChanged, this, [this](ShapeMode m) { canvas_->setShapeMode(m); });
-    connect(canvas_, &CanvasWidget::colorPicked, this, [this](const QColor &c) {
-        rail_->setPrimaryColor(c); // rail emits colorsChanged -> setBrushColor
-    });
+    // A tool committed an undoable edit: the canvas already rebuilt itself,
+    // the timeline still needs to pick up new keys/exposures.
+    connect(toolCtx_, &ToolContext::strokeCommitted, this, [this] { timeline_->refreshContent(); });
+
+    tools_->setActiveTool(QStringLiteral("brush"));
     resize(1500, 950);
 }
 
 MainWindow::~MainWindow() { delete doc_; }
-
-void MainWindow::onToolChanged(int tool) {
-    ToolId t = ToolId(tool);
-    canvas_->setToolMode(t);
-    toolOpts_->setTool(t);
-    static ResourceDb s_db = ResourceDb::defaults();
-    if (t == ToolId::Eraser) {
-        canvas_->setEraser(true);
-        if (auto *p = s_db.find("ink_eraser")) {
-            BrushPreset pr = *p;
-            pr.tip.diameter = float(canvas_->brushSize());
-            canvas_->setBrushPreset(pr);
-        }
-    } else {
-        canvas_->setEraser(false);
-        if (t == ToolId::Brush || t == ToolId::Shape || t == ToolId::Picker) {
-            if (auto *p = s_db.find("ink_pen")) {
-                // keep current rail color + strip size
-                BrushPreset pr = *p;
-                pr.color = {uint8_t(rail_->primaryColor().red()),
-                            uint8_t(rail_->primaryColor().green()),
-                            uint8_t(rail_->primaryColor().blue()), 255};
-                pr.tip.diameter = float(canvas_->brushSize());
-                canvas_->setBrushPreset(pr);
-            }
-        }
-    }
-}
-
-void MainWindow::onColorsChanged(QColor a, QColor) { canvas_->setBrushColor(a); }
 
 void MainWindow::onZoomPicked(double z) { canvas_->setZoom(z); }
 void MainWindow::onViewChanged() { topBar_->setZoom(canvas_->zoom()); }

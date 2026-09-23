@@ -1,18 +1,18 @@
 #pragma once
-// Main window (Kosei concept art): TopBar + [ToolRail | CanvasCard]
-// + TimelineCard. Canvas + timeline dock, file menus (export),
-// undo/redo, onion toggle, brush presets via tool rail.
+// Main window (Kosei concept art): TopBar + [ToolBox | CanvasCard]
+// + TimelineCard. Owns the document, the tool context and the tool manager;
+// all cross-widget wiring lives here.
 #include <QMainWindow>
 
 namespace ink {
-class Document;
 class CanvasWidget;
+class Document;
 class TimelineDock;
+class ToolBox;
+class ToolContext;
+class ToolManager;
+class ToolOptionsBar;
 class TopBar;
-class ToolRail;
-class ToolOptions;
-
-enum class ToolId : int;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -25,18 +25,18 @@ private slots:
     void onExportMp4();
     void onUndo();
     void onRedo();
-    void onToolChanged(int tool);
-    void onColorsChanged(QColor a, QColor b);
     void onZoomPicked(double z);
     void onViewChanged();
 
 private:
     Document *doc_{nullptr};
+    ToolContext *toolCtx_{nullptr};
+    ToolManager *tools_{nullptr};
     CanvasWidget *canvas_{nullptr};
     TimelineDock *timeline_{nullptr};
     TopBar *topBar_{nullptr};
-    ToolRail *rail_{nullptr};
-    ToolOptions *toolOpts_{nullptr};
+    ToolBox *toolBox_{nullptr};
+    ToolOptionsBar *toolOpts_{nullptr};
 };
 
 } // namespace ink

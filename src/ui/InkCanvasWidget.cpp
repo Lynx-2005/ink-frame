@@ -1,9 +1,13 @@
 #include "ui/InkCanvasWidget.h"
 #include "animation/InkAnimation.h"
 #include "ui/InkDocument.h"
+#include "ui/tools/InkToolContext.h"
+#include "ui/tools/InkToolManager.h"
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QWheelEvent>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -18,114 +22,45 @@ CanvasWidget::CanvasWidget(Document *doc, QWidget *parent)
     view_.setDocSize(double(doc_->image().width()), double(doc_->image().height()));
 }
 
-void CanvasWidget::setBrushPreset(const BrushPreset &p) {
-    preset_ = p; // value copy — canvas owns it, no lifetime coupling
-    hasPreset_ = true;
-    if (p.engine == "eraser" || eraser_)
-        op_ = std::make_unique<EraserOp>(AutoBrushTip(p.tip), p.dynamics);
-    else
-        op_ = std::make_unique<PixelBrushOp>(AutoBrushTip(p.tip), p.dynamics);
-}
-
-void CanvasWidget::setBrushColor(const QColor &c) {
-    preset_.color = {uint8_t(c.red()), uint8_t(c.green()), uint8_t(c.blue()), 255};
-}
-
-void CanvasWidget::setToolMode(ToolId t) {
-    toolMode_ = t;
-    shaping_ = false;
-    update();
-}
-
-void CanvasWidget::setBrushSize(double px) {
-    brushSize_ = std::clamp(px, 1.0, 256.0);
-    preset_.tip.diameter = float(brushSize_);
-    if (hasPreset_) {
-        if (preset_.engine == "eraser" || eraser_)
-            op_ = std::make_unique<EraserOp>(AutoBrushTip(preset_.tip), preset_.dynamics);
-        else
-            op_ = std::make_unique<PixelBrushOp>(AutoBrushTip(preset_.tip), preset_.dynamics);
+void CanvasWidget::setToolManager(ToolManager *tools) {
+    tools_ = tools;
+    if (tools_) {
+        connect(tools_, &ToolManager::activeToolChanged, this, [this](const QString &) {
+            updateCursor();
+            update();
+        });
     }
-    update();
+    updateCursor();
 }
 
-// Rasterize a shape preview onto the editable device as one undoable op.
-void CanvasWidget::commitShape() {
-    if (!shaping_) return;
-    shaping_ = false;
-    if (!doc_->currentLayer() || doc_->currentLayer()->locked()) { update(); return; }
-    PaintDevice *dev = doc_->editableDevice(doc_->currentLayer(), doc_->currentFrame());
-    if (!dev) { update(); return; }
-    TileMemento m;
-    const PixelRGBA8 col = preset_.color;
-    const float r = float(brushSize_ * 0.5);
-    Rect acc;
-    auto disc = [&](float cx, float cy) {
-        int x0 = int(std::floor(cx - r)), x1 = int(std::ceil(cx + r));
-        int y0 = int(std::floor(cy - r)), y1 = int(std::ceil(cy + r));
-        for (int y = y0; y <= y1; ++y)
-            for (int x = x0; x <= x1; ++x) {
-                float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
-                if (dx * dx + dy * dy <= r * r)
-                    acc = uniteRect(acc, dev->fillRect({x, y, 1, 1}, col, CompositeOp::Normal, &m));
-            }
-    };
-    auto line = [&](QPointF a, QPointF b) {
-        double len = std::hypot(b.x() - a.x(), b.y() - a.y());
-        int steps = std::max(1, int(len / std::max(1.0, r * 0.5)));
-        for (int i = 0; i <= steps; ++i) {
-            double t = double(i) / steps;
-            disc(float(a.x() + (b.x() - a.x()) * t), float(a.y() + (b.y() - a.y()) * t));
-        }
-    };
-    if (shapeMode_ == ShapeMode::Line) {
-        line(shapeStart_, shapeCur_);
-    } else {
-        double x0 = std::min(shapeStart_.x(), shapeCur_.x());
-        double y0 = std::min(shapeStart_.y(), shapeCur_.y());
-        double x1 = std::max(shapeStart_.x(), shapeCur_.x());
-        double y1 = std::max(shapeStart_.y(), shapeCur_.y());
-        if (shapeMode_ == ShapeMode::Rect) {
-            line({x0, y0}, {x1, y0});
-            line({x1, y0}, {x1, y1});
-            line({x1, y1}, {x0, y1});
-            line({x0, y1}, {x0, y0});
-        } else {
-            double cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
-            double rx = (x1 - x0) * 0.5, ry = (y1 - y0) * 0.5;
-            double per = 2 * M_PI * std::hypot(rx, ry) / 1.4142;
-            int steps = std::max(24, int(per / std::max(1.0, r * 0.5)));
-            for (int i = 0; i <= steps; ++i) {
-                double a = 2 * M_PI * i / steps;
-                disc(float(cx + rx * std::cos(a)), float(cy + ry * std::sin(a)));
-            }
-        }
-    }
-    if (!m.empty()) {
-        StrokeCommand cmd;
-        cmd.name = "Shape";
-        cmd.targets.push_back({dev, std::move(m)});
-        for (auto &e : cmd.targets[0].memento.entries)
-            cmd.after.push_back({dev, e.pos, dev->store().tile(e.pos.tx, e.pos.ty)});
-        doc_->undo().push(std::move(cmd));
-        strokeDirty_ = uniteRect(strokeDirty_, acc);
-        update(); // incremental path patches just the shape bounds
-        doc_->touchLayer(doc_->currentLayer(), doc_->currentFrame());
-        markDirty();
-        emit strokeFinished();
-    } else {
-        update();
-    }
+void CanvasWidget::setToolContext(ToolContext *ctx) {
+    ctx_ = ctx;
+    if (ctx_)
+        ctx_->setHost(this);
 }
 
-void CanvasWidget::pickAt(const QPointF &cp) {
-    PaintDevice proj;
-    doc_->image().project(doc_->currentFrame(), proj);
-    int x = int(std::floor(cp.x())), y = int(std::floor(cp.y()));
-    if (x < 0 || y < 0 || x >= doc_->image().width() || y >= doc_->image().height()) return;
-    PixelRGBA8 px = proj.pixel(x, y);
-    if (px.a == 0) return;
-    emit colorPicked(QColor(px.r, px.g, px.b));
+void CanvasWidget::updateCursor() {
+    if (panning_) {
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    }
+    if (spaceHeld_) {
+        setCursor(Qt::OpenHandCursor);
+        return;
+    }
+    Tool *tool = tools_ ? tools_->activeTool() : nullptr;
+    setCursor(tool ? tool->cursor() : QCursor(Qt::ArrowCursor));
+}
+
+ToolEvent CanvasWidget::makeEvent(const QPointF &docPos, float pressure, double timeSec,
+                                  Qt::KeyboardModifiers mods, bool tablet) const {
+    ToolEvent e;
+    e.docPos = {docPos.x(), docPos.y()};
+    e.pressure = pressure;
+    e.timeSec = timeSec;
+    e.mods = mods;
+    e.tablet = tablet;
+    return e;
 }
 
 void CanvasWidget::fitToView() {
@@ -184,8 +119,8 @@ std::shared_ptr<PaintDevice> CanvasWidget::frameImage(int frame, bool live) {
         if (auto cached = doc_->frameCache().get(frame))
             return cached;
     }
-    // Synchronous fallback (also the live path during a stroke) + warm the
-    // cache for scrub/playback.
+    // Synchronous fallback (also the live path while a tool is editing) +
+    // warm the cache for scrub/playback.
     auto out = std::make_shared<PaintDevice>();
     doc_->image().project(frame, *out);
     doc_->frameCache().requestRange(frame);
@@ -193,9 +128,8 @@ std::shared_ptr<PaintDevice> CanvasWidget::frameImage(int frame, bool live) {
 }
 
 std::shared_ptr<PaintDevice> CanvasWidget::ghostImage(int frame) {
-    // Ghost frames don't change while stroking the current frame, so cache
+    // Ghost frames don't change while editing the current frame, so cache
     // their projections across rebuilds within the same playhead position.
-    // Cleared on frame change / external dirty (see rebuildComposed).
     auto it = ghostDevs_.find(frame);
     if (it != ghostDevs_.end()) return it->second;
     auto dev = frameImage(frame, false);
@@ -240,12 +174,10 @@ void CanvasWidget::uploadRect(const Rect &r) {
                     size_t(c.w) * 4);
 }
 
-void CanvasWidget::rebuildComposed() {
+void CanvasWidget::rebuildComposed(bool live) {
     const int frame = doc_->currentFrame();
     if (frame != composedFrame_) ghostDevs_.clear(); // playhead moved
-    // Live project while stroking so each dab is visible immediately;
-    // cached (pre-stroke) projection otherwise.
-    auto proj = frameImage(frame, stroking_);
+    auto proj = frameImage(frame, live);
     composedDev_.clear();
     // Ghosts FIRST, active frame over them: onion skin is a light table, never
     // a tint on top of the drawing being worked on.
@@ -258,22 +190,18 @@ void CanvasWidget::rebuildComposed() {
     composedImage_.fill(Qt::transparent);
     Rect e = composedDev_.extent();
     if (!e.isEmpty()) uploadRect(e);
-    strokeDirty_ = Rect{};
     composedFrame_ = frame;
     composedDirty_ = false;
+    if (ctx_) ctx_->takeDirty(); // the rebuild just consumed any pending patch
 }
 
-void CanvasWidget::incrementalUpdate() {
-    // Re-project ONLY the stroke's dirty rect through the layer stack, then
-    // re-apply ghosts clipped to it, then patch the image. Cost scales with
-    // the stroke's footprint — not with layer count or canvas size (tile
-    // sparsity skips untouched layers/tiles).
-    Rect r = intersectRect(strokeDirty_, Rect{0, 0, doc_->image().width(), doc_->image().height()});
-    strokeDirty_ = Rect{};
+void CanvasWidget::incrementalUpdate(const Rect &dirty) {
+    // Re-project ONLY the dirty rect through the layer stack, then re-apply
+    // ghosts clipped to it, then patch the image. Cost scales with the
+    // footprint — not with layer count or canvas size (tile sparsity skips
+    // untouched layers/tiles).
+    Rect r = intersectRect(dirty, Rect{0, 0, doc_->image().width(), doc_->image().height()});
     if (r.isEmpty()) return;
-    // projectRect tile-aligns internally and returns the actual region. It
-    // lands in the scratch (not composedDev_) so the refreshed tiles can be
-    // rebuilt in the same order as a full rebuild: ghosts under, frame over.
     Rect refreshed = doc_->image().projectRect(doc_->currentFrame(), r, scratchDev_);
     if (refreshed.isEmpty()) return;
     composedDev_.store().clearRect(refreshed);
@@ -288,15 +216,19 @@ void CanvasWidget::paintGL() {
         view_.fit();
         fitted_ = true;
     }
+    Tool *tool = tools_ ? tools_->activeTool() : nullptr;
+    const bool live = tool && tool->isEditing();
     const int frame = doc_->currentFrame();
     if (composedDirty_ || frame != composedFrame_ || composedImage_.isNull()) {
-        rebuildComposed();
-    } else if (!strokeDirty_.isEmpty()) {
-        incrementalUpdate(); // stroke loop: patch dirty rect only
+        rebuildComposed(live);
+    } else if (ctx_) {
+        const Rect dirty = ctx_->takeDirty();
+        if (!dirty.isEmpty())
+            incrementalUpdate(dirty); // edit loop: patch dirty rect only
     }
 
     QPainter p(this);
-    // 1. backdrop gutter in widget space (Kosei dark surround + padding)
+    // 1. backdrop gutter in widget space (dark surround + padding)
     p.fillRect(0, 0, width(), height(), QColor(26, 27, 31));
     const int kPad = 16;
     const double kRadius = 10.0;
@@ -332,32 +264,13 @@ void CanvasWidget::paintGL() {
     // incrementally mid-stroke)
     if (!composedImage_.isNull())
         p.drawImage(QPoint(0, 0), composedImage_);
-    // shape preview + brush cursor ring (document space, cosmetic pens)
-    {
-        QPen prevPen(QColor(224, 138, 148, 230), 0);
-        p.setPen(prevPen);
-        p.setBrush(Qt::NoBrush);
-        if (shaping_) {
-            if (shapeMode_ == ShapeMode::Line) {
-                p.drawLine(shapeStart_, shapeCur_);
-            } else {
-                QRectF sr(QPointF(std::min(shapeStart_.x(), shapeCur_.x()),
-                                  std::min(shapeStart_.y(), shapeCur_.y())),
-                          QPointF(std::max(shapeStart_.x(), shapeCur_.x()),
-                                  std::max(shapeStart_.y(), shapeCur_.y())));
-                if (shapeMode_ == ShapeMode::Rect) p.drawRect(sr);
-                else p.drawEllipse(sr);
-            }
-        } else if (hover_ && !stroking_ &&
-                   (toolMode_ == ToolId::Brush || toolMode_ == ToolId::Eraser ||
-                    toolMode_ == ToolId::Shape)) {
-            double rad = brushSize_ * 0.5;
-            p.setPen(QPen(QColor(255, 255, 255, 210), 0));
-            p.drawEllipse(hoverPos_, rad, rad);
-            p.setPen(QPen(QColor(224, 138, 148, 180), 0));
-            p.drawEllipse(hoverPos_, rad + 1.5 / std::max(0.05, view_.zoom()),
-                          rad + 1.5 / std::max(0.05, view_.zoom()));
-        }
+    // active tool overlay (cursor ring, shape preview) in document space
+    if (tool) {
+        OverlayInfo info;
+        info.zoom = view_.zoom();
+        info.hover = hover_;
+        info.hoverPos = {hoverPos_.x(), hoverPos_.y()};
+        tool->paintOverlay(p, info);
     }
     p.restore(); // un-clip
     // card edge highlight
@@ -371,99 +284,49 @@ void CanvasWidget::paintGL() {
     p.end();
 }
 
-void CanvasWidget::beginStrokeAt(const QPointF &cp, float pressure, double timeSec) {
-    if (!doc_->currentLayer() || doc_->currentLayer()->locked()) return;
-    if (!hasPreset_) {
-        ResourceDb db = ResourceDb::defaults(); // local lives through the copy
-        setBrushPreset(*db.find("ink_pen"));
-    }
-    PaintDevice *dev = doc_->editableDevice(doc_->currentLayer(), doc_->currentFrame());
-    if (!dev) return;
-    strokeMemento_ = TileMemento{}; // fresh per stroke — undo never bleeds
-    strokeDevice_ = dev;
-    // Dabs union their rects into strokeDirty_; paintGL consumes it via the
-    // incremental path (no full rebuild per dab, no matter how many layers).
-    PaintOpContext ctx{dev, preset_.color, CompositeOp::Normal, &strokeMemento_, &strokeDirty_};
-    if (!op_) setBrushPreset(preset_);
-    op_->beginStroke(ctx);
-    stroking_ = true;
-    StrokeEvent ev;
-    ev.state.x = float(cp.x());
-    ev.state.y = float(cp.y());
-    ev.state.pressure = pressure;
-    ev.timeSec = timeSec;
-    op_->addEvent(ev);
-    update();
-}
-
-void CanvasWidget::moveStrokeTo(const QPointF &cp, float pressure, double timeSec) {
-    if (!stroking_) return;
-    StrokeEvent ev;
-    ev.state.x = float(cp.x());
-    ev.state.y = float(cp.y());
-    ev.state.pressure = pressure;
-    ev.timeSec = timeSec;
-    op_->addEvent(ev);
-    update(); // strokeDirty_ accumulated; paintGL patches incrementally
-}
-
-void CanvasWidget::endStroke() {
-    if (!stroking_) return;
-    op_->endStroke();
-    stroking_ = false;
-    // Publish a real undo command: memento (before) + after-tiles (redo).
-    if (strokeDevice_ && !strokeMemento_.empty()) {
-        StrokeCommand cmd;
-        cmd.name = eraser_ ? "Eraser stroke" : "Brush stroke";
-        cmd.targets.push_back({strokeDevice_, std::move(strokeMemento_)});
-        for (auto &e : cmd.targets[0].memento.entries)
-            cmd.after.push_back({strokeDevice_, e.pos, strokeDevice_->store().tile(e.pos.tx, e.pos.ty)});
-        doc_->undo().push(std::move(cmd));
-    }
-    strokeDevice_ = nullptr;
-    doc_->touchLayer(doc_->currentLayer(), doc_->currentFrame());
-    markDirty(); // converge: full rebuild off the fresh cache, ghosts refreshed
-    emit strokeFinished();
-}
-
 void CanvasWidget::mousePressEvent(QMouseEvent *e) {
-    if (e->button() == Qt::LeftButton) {
-        if (toolMode_ == ToolId::Picker) { pickAt(toCanvas(e->position())); return; }
-        if (toolMode_ == ToolId::Shape) {
-            shaping_ = true;
-            shapeStart_ = shapeCur_ = toCanvas(e->position());
-            update();
-            return;
-        }
-        beginStrokeAt(toCanvas(e->position()), 0.6f, double(e->timestamp()) / 1000.0);
-    } else if (e->button() == Qt::MiddleButton) {
+    if (e->button() == Qt::MiddleButton || (spaceHeld_ && e->button() == Qt::LeftButton)) {
+        panning_ = true;
         panStart_ = e->pos();
+        updateCursor();
+        return;
     }
+    if (e->button() != Qt::LeftButton || !tools_)
+        return;
+    toolPressed_ = true;
+    tools_->press(makeEvent(toCanvas(e->position()), 1.0f, double(e->timestamp()) / 1000.0,
+                            e->modifiers(), false));
+    update();
 }
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent *e) {
     hover_ = true;
     hoverPos_ = toCanvas(e->position());
-    if (shaping_) {
-        shapeCur_ = toCanvas(e->position());
-        update();
-    } else if (stroking_) {
-        moveStrokeTo(toCanvas(e->position()), 0.6f, double(e->timestamp()) / 1000.0);
-    } else if (e->buttons() & Qt::MiddleButton) {
-        QPoint d = e->pos() - panStart_;
+    if (panning_) {
+        const QPoint d = e->pos() - panStart_;
         panStart_ = e->pos();
         view_.panBy({double(d.x()), double(d.y())});
         emit viewChanged();
         update();
-    } else {
-        update(); // cursor ring follows
+        return;
     }
+    if (toolPressed_ && tools_)
+        tools_->move(makeEvent(hoverPos_, 1.0f, double(e->timestamp()) / 1000.0, e->modifiers(), false));
+    update(); // ring / preview follow the pointer
 }
 
 void CanvasWidget::mouseReleaseEvent(QMouseEvent *e) {
-    if (e->button() == Qt::LeftButton) {
-        if (shaping_) { commitShape(); return; }
-        endStroke();
+    if (panning_ && (e->button() == Qt::MiddleButton || e->button() == Qt::LeftButton)) {
+        panning_ = false;
+        updateCursor();
+        return;
+    }
+    if (e->button() == Qt::LeftButton && toolPressed_) {
+        toolPressed_ = false;
+        if (tools_)
+            tools_->release(makeEvent(toCanvas(e->position()), 1.0f, double(e->timestamp()) / 1000.0,
+                                      e->modifiers(), false));
+        update();
     }
 }
 
@@ -482,40 +345,51 @@ void CanvasWidget::wheelEvent(QWheelEvent *e) {
 }
 
 void CanvasWidget::tabletEvent(QTabletEvent *e) {
+    if (!tools_) {
+        e->accept();
+        return;
+    }
+    const QPointF docPos = toCanvas(e->position());
+    ToolEvent ev = makeEvent(docPos, float(e->pressure()), double(e->timestamp()) / 1000.0,
+                             e->modifiers(), true);
+    ev.tiltX = float(e->xTilt());
+    ev.tiltY = float(e->yTilt());
     switch (e->type()) {
     case QEvent::TabletPress:
-        if (toolMode_ == ToolId::Picker) { pickAt(toCanvas(e->position())); e->accept(); break; }
-        if (toolMode_ == ToolId::Shape) {
-            shaping_ = true;
-            shapeStart_ = shapeCur_ = toCanvas(e->position());
-            update();
-            e->accept();
-            break;
-        }
-        beginStrokeAt(toCanvas(e->position()), float(e->pressure()),
-                      double(e->timestamp()) / 1000.0);
-        e->accept();
+        toolPressed_ = true;
+        tools_->press(ev);
         break;
     case QEvent::TabletMove:
-        if (shaping_) {
-            shapeCur_ = toCanvas(e->position());
-            update();
-        } else if (stroking_)
-            moveStrokeTo(toCanvas(e->position()), float(e->pressure()),
-                         double(e->timestamp()) / 1000.0);
-        e->accept();
+        hover_ = true;
+        hoverPos_ = docPos;
+        if (toolPressed_)
+            tools_->move(ev);
         break;
     case QEvent::TabletRelease:
-        if (shaping_) commitShape();
-        else endStroke();
-        e->accept();
+        if (toolPressed_)
+            tools_->release(ev);
+        toolPressed_ = false;
         break;
     default:
         break;
     }
+    update();
+    e->accept();
 }
 
 void CanvasWidget::keyPressEvent(QKeyEvent *e) {
+    if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+        spaceHeld_ = true;
+        updateCursor();
+        return;
+    }
+    if (e->key() == Qt::Key_Escape) {
+        if (tools_)
+            tools_->cancel();
+        toolPressed_ = false;
+        update();
+        return;
+    }
     if (e->key() == Qt::Key_Plus || e->key() == Qt::Key_Equal) {
         view_.zoomAtCenter(1.15);
         update();
@@ -525,6 +399,16 @@ void CanvasWidget::keyPressEvent(QKeyEvent *e) {
     } else if (e->key() == Qt::Key_0 && (e->modifiers() & Qt::ControlModifier)) {
         fitToView();
     }
+}
+
+void CanvasWidget::keyReleaseEvent(QKeyEvent *e) {
+    if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+        spaceHeld_ = false;
+        panning_ = false;
+        updateCursor();
+        return;
+    }
+    QOpenGLWidget::keyReleaseEvent(e);
 }
 
 } // namespace ink

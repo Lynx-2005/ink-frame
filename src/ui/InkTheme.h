@@ -26,6 +26,15 @@ struct InkTheme {
     static QColor hover() { return {52, 53, 60}; }
     static QColor warn() { return {217, 163, 74}; }        // locked rows
     static QColor accentMuted() { return {138, 106, 114}; } // secondary selection
+    // --- tool chrome: flat, neutral, one functional accent (no candy) ---
+    // Hover fill, checked block, glyph tones and the focus/accent line the
+    // toolbox and tool options bar are built from.
+    static QColor toolHover() { return {46, 48, 56}; }      // #2E3038
+    static QColor toolChecked() { return {83, 114, 142}; }  // #53728E
+    static QColor toolGlyph() { return {200, 200, 200}; }   // #C8C8C8
+    static QColor toolGlyphOn() { return {235, 235, 235}; } // #EBEBEB
+    static QColor focusRing() { return {138, 190, 236}; }   // #8ABEEC
+    static QColor control() { return {38, 39, 44}; }        // #26272C (combo bg)
     // --- spacing scale ---
     static int sp(int i) { static const int s[5] = {4, 8, 12, 16, 24}; return s[i < 0 ? 0 : (i > 4 ? 4 : i)]; }
     static int radius() { return 10; }

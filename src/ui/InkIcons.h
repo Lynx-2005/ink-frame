@@ -1,18 +1,22 @@
 #pragma once
 // Hand-painted vector icon factory. Every glyph is drawn with QPainter
 // paths — no emoji, no asset files, always crisp at any size/DPR and
-// theme-aware (normal / disabled / active-accent variants).
-// Replaces all emoji glyphs across ToolRail, LayerDock, Timeline, TopBar.
+// theme-aware (normal / disabled / active variants).
+// Tool glyphs are drawn on a 24x24 design grid with 1.6-unit strokes so the
+// whole set reads as one professional family (see grid24 in the .cpp).
 #include <QColor>
 #include <QIcon>
 
 namespace ink {
 
 enum class IconId {
-    Brush, Eraser, Shape, Picker, Text, Note, Select,
+    // tools, in toolbox order
+    Brush, Eraser, Line, Rectangle, Ellipse, Picker,
+    Swap, ResetColor,
+    // layer / timeline chrome
     Eye, EyeOff, Lock, Unlock, Folder, FolderOpen,
     Play, Pause, PrevKey, NextKey, SkipStart, SkipEnd,
-    Plus, Minus, Close, Check,
+    Plus, Minus, Close, Check, CheckBox,
     Onion, Loop, Once, PingPong,
     Undo, Redo, Menu, Fit, Key,
     // cells (paper sheets)
