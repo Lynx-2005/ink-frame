@@ -3,8 +3,9 @@
 // foreground/background colors, brush settings, shape settings and the
 // dirty-rect plumbing back into the canvas. One place owns it, so the
 // toolbox, the options bar and the tools can never drift apart.
-#include "resources/InkResources.h"
+#include "core/InkSelection.h"
 #include "core/InkTileStore.h"
+#include "resources/InkResources.h"
 #include <QColor>
 #include <QObject>
 #include <QString>
@@ -28,6 +29,12 @@ public:
     // missing or not paintable.
     PaintDevice *editableDevice() const;
     bool canEdit() const { return editableDevice() != nullptr; }
+
+    // --- selection (per document) ---
+    Selection &selection();
+    // nullptr when there is nothing selected: tools then skip per-pixel work.
+    const Selection *selectionClip() const;
+    void notifySelectionChanged() { emit selectionChanged(); }
 
     // --- colors: foreground / background (X swaps, D resets) ---
     const QColor &primary() const { return primary_; }
@@ -70,6 +77,7 @@ public:
 signals:
     void colorsChanged();
     void settingsChanged(); // brush tip/dynamics or shape options changed
+    void selectionChanged();
     void strokeCommitted();
     void statusChanged(const QString &text);
 

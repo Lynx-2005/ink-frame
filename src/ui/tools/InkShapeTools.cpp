@@ -146,7 +146,7 @@ QPainterPath LineTool::previewPath(const Vec2 &a, const Vec2 &b) const {
 void LineTool::commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
                       TileMemento &memento, Rect &dirty) const {
     dirty = strokePolyline(dev, {{a.x, a.y}, {b.x, b.y}}, shapeTip(ctx), shapeColor(ctx), 1.0f,
-                           CompositeOp::Normal, &memento);
+                           CompositeOp::Normal, &memento, ctx.selectionClip());
 }
 
 // --- rectangle ---
@@ -165,11 +165,11 @@ void RectangleTool::commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, co
         const int x1 = int(std::ceil(r.right()));
         const int y1 = int(std::ceil(r.bottom()));
         dirty = dev.fillRect({x0, y0, std::max(0, x1 - x0), std::max(0, y1 - y0)},
-                             shapeColor(ctx), CompositeOp::Normal, &memento);
+                             shapeColor(ctx), CompositeOp::Normal, &memento, ctx.selectionClip());
         return;
     }
     dirty = strokeRect(dev, a.x, a.y, b.x, b.y, shapeTip(ctx), shapeColor(ctx), 1.0f,
-                       CompositeOp::Normal, &memento);
+                       CompositeOp::Normal, &memento, ctx.selectionClip());
 }
 
 // --- ellipse ---
@@ -187,11 +187,12 @@ void EllipseTool::commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, cons
     const double rx = r.width() * 0.5;
     const double ry = r.height() * 0.5;
     if (ctx.shapeFill()) {
-        dirty = fillEllipse(dev, cx, cy, rx, ry, shapeColor(ctx), CompositeOp::Normal, &memento);
+        dirty = fillEllipse(dev, cx, cy, rx, ry, shapeColor(ctx), CompositeOp::Normal, &memento,
+                            ctx.selectionClip());
         return;
     }
     dirty = strokeEllipse(dev, cx, cy, rx, ry, shapeTip(ctx), shapeColor(ctx), 1.0f,
-                          CompositeOp::Normal, &memento);
+                          CompositeOp::Normal, &memento, ctx.selectionClip());
 }
 
 } // namespace ink

@@ -1,0 +1,12 @@
+madhavan-rithvik@madhavan-rithvik-Inspiron-3505:/media/madhavan-rithvik/atlas1/inkframe$ ./build-qt/inkframe_app
+Segmentation fault (core dumped)
+madhavan-rithvik@madhavan-rithvik-Inspiron-3505:/media/madhavan-rithvik/atlas1/inkframe$ ./build-qt/inkframe_app
+^C
+madhavan-rithvik@madhavan-rithvik-Inspiron-3505:/media/madhavan-rithvik/atlas1/inkframe$ ./build-qt/inkframe_app
+^X^C
+madhavan-rithvik@madhavan-rithvik-Inspiron-3505:/media/madhavan-rithvik/atlas1/inkframe$ ./build-qt/inkframe_app
+^C
+madhavan-rithvik@madhavan-rithvik-Inspiron-3505:/media/madhavan-rithvik/atlas1/inkframe$ ./build-qt/inkframe_app
+malloc_consolidate(): unaligned fastbin chunk detected
+Aborted (core dumped)
+

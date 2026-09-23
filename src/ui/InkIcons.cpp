@@ -91,6 +91,86 @@ void p_ellipse(QPainter &p, const QRectF &r, const QColor &c) {
     p.restore();
 }
 
+void p_fill(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    // tilted bucket + a drip: reads as "pour color into the region"
+    p.save();
+    p.translate(10.0, 11.0);
+    p.rotate(-35);
+    QPainterPath body;
+    body.moveTo(-5.8, -4.8);
+    body.lineTo(5.8, -4.8);
+    body.lineTo(7.0, 5.0);
+    body.lineTo(-7.0, 5.0);
+    body.closeSubpath();
+    p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(body);
+    p.drawArc(QRectF(-4.0, -10.6, 8.0, 7.6), 0, 180 * 16);
+    p.restore();
+    QPainterPath drop;
+    drop.moveTo(18.4, 14.6);
+    drop.cubicTo(20.6, 17.4, 21.0, 18.9, 18.4, 20.3);
+    drop.cubicTo(15.8, 18.9, 16.2, 17.4, 18.4, 14.6);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawPath(drop);
+    p.restore();
+}
+
+void p_selectRect(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 1.7, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(QRectF(4.5, 6.5, 15.0, 11.0), 1.5, 1.5);
+    p.restore();
+}
+
+void p_selectEllipse(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 1.7, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPointF(12.0, 12.0), 7.7, 6.1);
+    p.restore();
+}
+
+void p_lasso(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 1.7, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPointF(10.6, 9.2), 6.3, 5.3);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    QPainterPath rope;
+    rope.moveTo(14.6, 13.6);
+    rope.cubicTo(16.4, 16.2, 17.6, 17.6, 17.1, 19.2);
+    p.drawPath(rope);
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPointF(17.1, 20.3), 1.5, 1.5);
+    p.restore();
+}
+
+void p_chevronLeft(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawPolyline(QPolygonF({QPointF(14.6, 6.4), QPointF(9.4, 12.0), QPointF(14.6, 17.6)}));
+    p.restore();
+}
+
+void p_chevronRight(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawPolyline(QPolygonF({QPointF(9.4, 6.4), QPointF(14.6, 12.0), QPointF(9.4, 17.6)}));
+    p.restore();
+}
+
 void p_picker(QPainter &p, const QRectF &r, const QColor &c) {
     p.save();
     grid24(p, r);
@@ -529,10 +609,16 @@ PaintFn fnFor(IconId id) {
     switch (id) {
     case IconId::Brush: return p_brush;
     case IconId::Eraser: return p_eraser;
+    case IconId::Fill: return p_fill;
+    case IconId::Picker: return p_picker;
     case IconId::Line: return p_line;
     case IconId::Rectangle: return p_rectangle;
     case IconId::Ellipse: return p_ellipse;
-    case IconId::Picker: return p_picker;
+    case IconId::SelectRect: return p_selectRect;
+    case IconId::SelectEllipse: return p_selectEllipse;
+    case IconId::Lasso: return p_lasso;
+    case IconId::ChevronLeft: return p_chevronLeft;
+    case IconId::ChevronRight: return p_chevronRight;
     case IconId::Swap: return p_swap;
     case IconId::ResetColor: return p_resetColor;
     case IconId::Eye: return p_eye;

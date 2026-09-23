@@ -1,6 +1,8 @@
 #include "ui/tools/InkToolFactory.h"
 #include "ui/tools/InkColorPickerTool.h"
+#include "ui/tools/InkFillTool.h"
 #include "ui/tools/InkPaintTool.h"
+#include "ui/tools/InkSelectionTools.h"
 #include "ui/tools/InkShapeTools.h"
 #include <algorithm>
 
@@ -59,6 +61,26 @@ void registerBuiltinTools() {
     eraser.create = [] { return new EraserTool(); };
     reg.add(eraser);
 
+    ToolFactory fill;
+    fill.id = QStringLiteral("fill");
+    fill.name = QStringLiteral("Fill");
+    fill.section = ToolSections::fill();
+    fill.icon = IconId::Fill;
+    fill.shortcut = QKeySequence(Qt::Key_F);
+    fill.priority = 0;
+    fill.create = [] { return new FillTool(); };
+    reg.add(fill);
+
+    ToolFactory picker;
+    picker.id = QStringLiteral("picker");
+    picker.name = QStringLiteral("Color Picker");
+    picker.section = ToolSections::fill();
+    picker.icon = IconId::Picker;
+    picker.shortcut = QKeySequence(Qt::Key_P);
+    picker.priority = 1;
+    picker.create = [] { return new ColorPickerTool(); };
+    reg.add(picker);
+
     ToolFactory line;
     line.id = QStringLiteral("line");
     line.name = QStringLiteral("Line");
@@ -89,15 +111,35 @@ void registerBuiltinTools() {
     ellipse.create = [] { return new EllipseTool(); };
     reg.add(ellipse);
 
-    ToolFactory picker;
-    picker.id = QStringLiteral("picker");
-    picker.name = QStringLiteral("Color Picker");
-    picker.section = ToolSections::sample();
-    picker.icon = IconId::Picker;
-    picker.shortcut = QKeySequence(Qt::Key_P);
-    picker.priority = 0;
-    picker.create = [] { return new ColorPickerTool(); };
-    reg.add(picker);
+    ToolFactory rectSelect;
+    rectSelect.id = QStringLiteral("rect_select");
+    rectSelect.name = QStringLiteral("Rectangle Select");
+    rectSelect.section = ToolSections::select();
+    rectSelect.icon = IconId::SelectRect;
+    rectSelect.shortcut = QKeySequence(Qt::Key_M);
+    rectSelect.priority = 0;
+    rectSelect.create = [] { return new RectSelectTool(); };
+    reg.add(rectSelect);
+
+    ToolFactory ellipseSelect;
+    ellipseSelect.id = QStringLiteral("ellipse_select");
+    ellipseSelect.name = QStringLiteral("Ellipse Select");
+    ellipseSelect.section = ToolSections::select();
+    ellipseSelect.icon = IconId::SelectEllipse;
+    ellipseSelect.shortcut = QKeySequence(Qt::Key_J);
+    ellipseSelect.priority = 1;
+    ellipseSelect.create = [] { return new EllipseSelectTool(); };
+    reg.add(ellipseSelect);
+
+    ToolFactory lasso;
+    lasso.id = QStringLiteral("lasso");
+    lasso.name = QStringLiteral("Freehand Select");
+    lasso.section = ToolSections::select();
+    lasso.icon = IconId::Lasso;
+    lasso.shortcut = QKeySequence(Qt::SHIFT | Qt::Key_L);
+    lasso.priority = 2;
+    lasso.create = [] { return new LassoSelectTool(); };
+    reg.add(lasso);
 }
 
 } // namespace ink

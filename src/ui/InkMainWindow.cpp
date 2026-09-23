@@ -20,7 +20,7 @@ namespace ink {
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setStyleSheet(InkTheme::styleSheet());
-    setWindowTitle(QStringLiteral("Kōsei — InkFrame"));
+    setWindowTitle(QStringLiteral("InkFrame"));
     doc_ = new Document(1920, 1080, 12); // concept art runs 12 fps
 
     // --- tool system: context owns settings, manager owns the active tool ---

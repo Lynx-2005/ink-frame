@@ -17,8 +17,9 @@ class Tool;
 // toolbox order (same trick Krita uses for its ToolBoxSection names).
 namespace ToolSections {
 inline QString paint() { return QStringLiteral("0 Paint"); }
-inline QString shape() { return QStringLiteral("1 Shape"); }
-inline QString sample() { return QStringLiteral("2 Sample"); }
+inline QString fill() { return QStringLiteral("1 Fill"); }
+inline QString shape() { return QStringLiteral("2 Shape"); }
+inline QString select() { return QStringLiteral("3 Select"); }
 } // namespace ToolSections
 
 struct ToolFactory {

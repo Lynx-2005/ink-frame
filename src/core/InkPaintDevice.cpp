@@ -1,4 +1,5 @@
 #include "core/InkPaintDevice.h"
+#include "core/InkSelection.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -48,18 +49,30 @@ snapshotRect(const TileStore &store, const Rect &r) {
     return snap;
 }
 
-Rect PaintDevice::fillRect(const Rect &r, PixelRGBA8 color, CompositeOp op, TileMemento *m) {
+Rect PaintDevice::fillRect(const Rect &r, PixelRGBA8 color, CompositeOp op, TileMemento *m,
+                           const Selection *clip) {
     if (r.isEmpty()) return {};
-    const bool solid = (op == CompositeOp::Normal || op == CompositeOp::Erase) && color.a == 255;
-    const PixelRGBA8 solidPx = (op == CompositeOp::Erase) ? PixelRGBA8{0,0,0,0} : color;
+    const bool erase = (op == CompositeOp::Erase);
+    const bool solid = !clip && (op == CompositeOp::Normal || erase) && color.a == 255;
+    const PixelRGBA8 solidPx = erase ? PixelRGBA8{0,0,0,0} : color;
     return store_.updateTilesInRect(r, m, [&](TileData &t, int ox, int oy, const Rect &c) {
         for (int y = c.y; y < c.y + c.h; ++y) {
             PixelRGBA8 *row = &t.px[(y - oy) * kTileSize + (c.x - ox)];
             if (solid) {
                 for (int x = c.x; x < c.x + c.w; ++x) *row++ = solidPx;
-            } else {
-                for (int x = c.x; x < c.x + c.w; ++x, ++row)
-                    *row = compositeOver(*row, color);
+                continue;
+            }
+            for (int x = c.x; x < c.x + c.w; ++x, ++row) {
+                float cov = clip ? float(clip->coverage(x, y)) / 255.0f : 1.0f;
+                if (cov <= 0.002f) continue;
+                if (erase) {
+                    row->a = static_cast<uint8_t>(float(row->a) * (1.0f - cov));
+                } else {
+                    PixelRGBA8 s = color;
+                    s.a = static_cast<uint8_t>(std::clamp(float(s.a) * cov, 0.0f, 255.0f));
+                    if (s.a == 0) continue;
+                    *row = compositeOver(*row, s);
+                }
             }
         }
     });
@@ -102,7 +115,7 @@ Rect PaintDevice::blitRect(const PaintDevice &src, const Rect &srcRect, int dx, 
 
 Rect PaintDevice::applyDab(float cx, float cy, const float *mask, int maskSize,
                            PixelRGBA8 color, float opacity, CompositeOp op,
-                           TileMemento *m) {
+                           TileMemento *m, const Selection *clip) {
     int r = maskSize / 2;
     int x0 = static_cast<int>(std::floor(cx)) - r;
     int y0 = static_cast<int>(std::floor(cy)) - r;
@@ -114,6 +127,8 @@ Rect PaintDevice::applyDab(float cx, float cy, const float *mask, int maskSize,
             PixelRGBA8 *row = &t.px[(y - oy) * kTileSize + (c.x - ox)];
             for (int x = c.x; x < c.x + c.w; ++x, ++mrow, ++row) {
                 float a = *mrow * opacity;
+                if (clip)
+                    a *= float(clip->coverage(x, y)) / 255.0f;
                 if (a <= 0.003f) continue;
                 if (erase) {
                     row->a = static_cast<uint8_t>(row->a * (1 - a));

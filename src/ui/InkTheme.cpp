@@ -29,6 +29,9 @@ QString InkTheme::styleSheet() {
         "QToolButton#ToolBoxButton:hover { background: #2E3038; }"
         "QToolButton#ToolBoxButton:checked { background: #53728E; border-color: #53728E; }"
         "QToolButton#ToolBoxButton:disabled { background: transparent; }"
+        "QWidget#ToolBoxHeader, QWidget#ToolBoxBody { background: transparent; }"
+        "QToolButton#ToolBoxCollapse { border-radius: 3px; padding: 0px; }"
+        "QToolButton#ToolBoxCollapse:hover { background: #2E3038; }"
         "QFrame#ToolBoxSep { background: #34353C; border: none; min-height: 1px; max-height: 1px; }"
         "QWidget#ToolBoxGroup, QWidget#ColorWells { background: transparent; }"
         "QToolButton#WellBtn { border-radius: 3px; padding: 0px; }"
@@ -82,7 +85,6 @@ QString InkTheme::styleSheet() {
         "QMenu::item:selected { background: #3A4054; }"
         "QMenu::separator { height: 1px; background: #34353C; margin: 4px 8px; }"
         // labels
-        "QLabel#Logo { font-size: 22px; font-style: italic; font-weight: 300; color: #E8E8EA; }"
         "QLabel#Timecode { font-family: monospace; font-size: 14px; color: #E8E8EA; }"
         "QLabel#Hint { color: #9698A0; font-size: 12px; }"
         "QLabel#Section { color: #9698A0; font-size: 11px; font-weight: 600; }"

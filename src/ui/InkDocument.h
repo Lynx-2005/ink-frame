@@ -9,6 +9,7 @@
 #include "animation/InkAnimation.h"
 #include "animation/InkTimelineModel.h"
 #include "core/InkImage.h"
+#include "core/InkSelection.h"
 #include "core/InkStroke.h"
 #include <memory>
 #include <string>
@@ -27,6 +28,9 @@ public:
     FrameCache &frameCache() { return *cache_; }
     PlaybackEngine &playback() { return playback_; }
     OnionSkinConfig &onion() { return onion_; }
+    // One selection per document (Krita keeps it on the image): painting and
+    // filling are clipped by it, selection tools edit it.
+    Selection &selection() { return selection_; }
 
     PaintLayer *currentLayer() { return currentLayer_; }
     void setCurrentLayer(PaintLayer *l) { currentLayer_ = l; }
@@ -113,6 +117,7 @@ private:
     std::unique_ptr<FrameCache> cache_;
     PlaybackEngine playback_;
     OnionSkinConfig onion_;
+    Selection selection_;
     PaintLayer *currentLayer_{nullptr};
     GroupLayer *currentFolder_{nullptr};
     KeyClipboard clipboard_;

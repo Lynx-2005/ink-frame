@@ -18,6 +18,7 @@ Document::Document(int w, int h, int fps)
     syncTimelineFromImage();
     currentFolder_ = folder;
     currentLayer_ = bg;
+    selection_.reset(w, h);
     cache_ = std::make_unique<FrameCache>(64, 2);
     cache_->setRenderFn([this](int frame) {
         auto out = std::make_shared<PaintDevice>();

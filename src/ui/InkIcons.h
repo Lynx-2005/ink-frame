@@ -11,12 +11,14 @@ namespace ink {
 
 enum class IconId {
     // tools, in toolbox order
-    Brush, Eraser, Line, Rectangle, Ellipse, Picker,
+    Brush, Eraser, Fill, Picker, Line, Rectangle, Ellipse,
+    SelectRect, SelectEllipse, Lasso,
     Swap, ResetColor,
     // layer / timeline chrome
     Eye, EyeOff, Lock, Unlock, Folder, FolderOpen,
     Play, Pause, PrevKey, NextKey, SkipStart, SkipEnd,
     Plus, Minus, Close, Check, CheckBox,
+    ChevronLeft, ChevronRight,
     Onion, Loop, Once, PingPong,
     Undo, Redo, Menu, Fit, Key,
     // cells (paper sheets)

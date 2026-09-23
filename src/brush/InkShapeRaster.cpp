@@ -1,5 +1,6 @@
 #include "brush/InkShapeRaster.h"
 #include "brush/InkPaintOp.h" // StrokeInterpolator
+#include "core/InkSelection.h"
 #include <algorithm>
 #include <cmath>
 
@@ -8,7 +9,8 @@ namespace ink {
 namespace {
 
 Rect stampPoints(PaintDevice &dev, const AutoBrushTip &tip, PixelRGBA8 color, float opacity,
-                 CompositeOp op, TileMemento *memento, const std::vector<RasterPoint> &pts) {
+                 CompositeOp op, TileMemento *memento, const Selection *clip,
+                 const std::vector<RasterPoint> &pts) {
     StrokeInterpolator interp(tip.spacingPx());
     Rect acc;
     for (const RasterPoint &pt : pts) {
@@ -18,7 +20,7 @@ Rect stampPoints(PaintDevice &dev, const AutoBrushTip &tip, PixelRGBA8 color, fl
         s.pressure = 1.0f; // shapes are not pressure-modulated
         for (const Dab &d : interp.push(s, 1.0f, 1.0f))
             acc = uniteRect(acc, dev.applyDab(d.x, d.y, tip.mask().data(), tip.maskSize(),
-                                              color, opacity, op, memento));
+                                              color, opacity, op, memento, clip));
     }
     return acc;
 }
@@ -26,20 +28,23 @@ Rect stampPoints(PaintDevice &dev, const AutoBrushTip &tip, PixelRGBA8 color, fl
 } // namespace
 
 Rect strokePolyline(PaintDevice &dev, const std::vector<RasterPoint> &pts, const AutoBrushTip &tip,
-                    PixelRGBA8 color, float opacity, CompositeOp op, TileMemento *memento) {
+                    PixelRGBA8 color, float opacity, CompositeOp op, TileMemento *memento,
+                    const Selection *clip) {
     if (pts.empty())
         return {};
-    return stampPoints(dev, tip, color, opacity, op, memento, pts);
+    return stampPoints(dev, tip, color, opacity, op, memento, clip, pts);
 }
 
 Rect strokeRect(PaintDevice &dev, double x0, double y0, double x1, double y1, const AutoBrushTip &tip,
-                PixelRGBA8 color, float opacity, CompositeOp op, TileMemento *memento) {
+                PixelRGBA8 color, float opacity, CompositeOp op, TileMemento *memento,
+                const Selection *clip) {
     const std::vector<RasterPoint> pts = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}, {x0, y0}};
-    return stampPoints(dev, tip, color, opacity, op, memento, pts);
+    return stampPoints(dev, tip, color, opacity, op, memento, clip, pts);
 }
 
 Rect strokeEllipse(PaintDevice &dev, double cx, double cy, double rx, double ry, const AutoBrushTip &tip,
-                   PixelRGBA8 color, float opacity, CompositeOp op, TileMemento *memento) {
+                   PixelRGBA8 color, float opacity, CompositeOp op, TileMemento *memento,
+                   const Selection *clip) {
     rx = std::abs(rx);
     ry = std::abs(ry);
     if (rx < 1e-3 || ry < 1e-3)
@@ -58,11 +63,11 @@ Rect strokeEllipse(PaintDevice &dev, double cx, double cy, double rx, double ry,
         const double a = 2.0 * M_PI * double(i) / double(steps);
         pts.push_back({cx + rx * std::cos(a), cy + ry * std::sin(a)});
     }
-    return stampPoints(dev, tip, color, opacity, op, memento, pts);
+    return stampPoints(dev, tip, color, opacity, op, memento, clip, pts);
 }
 
 Rect fillEllipse(PaintDevice &dev, double cx, double cy, double rx, double ry, PixelRGBA8 color,
-                 CompositeOp op, TileMemento *memento) {
+                 CompositeOp op, TileMemento *memento, const Selection *clip) {
     rx = std::abs(rx);
     ry = std::abs(ry);
     if (rx < 1e-3 || ry < 1e-3)
@@ -79,7 +84,7 @@ Rect fillEllipse(PaintDevice &dev, double cx, double cy, double rx, double ry, P
         const int xb = int(std::floor(cx + half - 0.5));
         if (xb < xa)
             continue;
-        acc = uniteRect(acc, dev.fillRect({xa, y, xb - xa + 1, 1}, color, op, memento));
+        acc = uniteRect(acc, dev.fillRect({xa, y, xb - xa + 1, 1}, color, op, memento, clip));
     }
     return acc;
 }

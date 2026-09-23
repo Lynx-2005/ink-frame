@@ -8,6 +8,7 @@
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <QTabletEvent>
+#include <QTimer>
 #include <map>
 #include <memory>
 #include "core/InkPaintDevice.h"
@@ -61,6 +62,7 @@ private:
     QTransform qtransform() const;
     void syncViewSizes();
     void updateCursor();
+    void updateAnts(); // start/stop the marching-ants animation
     // Projection of frame f: frame cache first, synchronous fallback.
     // When live==true (edit in progress) the cache is bypassed for the
     // current frame: the cache holds the pre-stroke image, so using it would
@@ -89,6 +91,9 @@ private:
     bool toolPressed_{false};
     bool hover_{false};
     QPointF hoverPos_;
+    // marching ants: phase + timer, only running while a selection exists
+    QTimer *antsTimer_{nullptr};
+    int antsPhase_{0};
 
     // Composed view: persistent device + persistent full-canvas image.
     bool composedDirty_{true};

@@ -48,6 +48,7 @@ struct PaintOpContext {
     TileMemento *memento{nullptr}; // stroke-level undo capture
     Rect *dirtyAccum{nullptr};     // optional: union of dab rects (canvas
                                    // incremental projection consumes this)
+    const Selection *selection{nullptr}; // optional selection clip
 };
 
 class PaintOp {

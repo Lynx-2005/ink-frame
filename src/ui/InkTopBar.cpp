@@ -2,7 +2,6 @@
 #include "ui/InkIcons.h"
 #include <QComboBox>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QToolButton>
 
 namespace ink {
@@ -13,10 +12,6 @@ TopBar::TopBar(QWidget *parent) : QWidget(parent) {
     auto *lay = new QHBoxLayout(this);
     lay->setContentsMargins(12, 4, 12, 4);
     lay->setSpacing(8);
-
-    auto *logo = new QLabel(QStringLiteral("Kōsei"), this);
-    logo->setObjectName(QStringLiteral("Logo"));
-    lay->addWidget(logo);
 
     projBox_ = new QComboBox(this);
     projBox_->setEditable(true);

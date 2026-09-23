@@ -88,7 +88,8 @@ void PaintToolBase::beginPrimary(const ToolEvent &e) {
     opDirty_ = Rect{};
     if (!op_ || !opMatches(strokePreset_))
         rebuildOp();
-    PaintOpContext opctx{device_, strokeColor_, CompositeOp::Normal, &memento_, &opDirty_};
+    PaintOpContext opctx{device_, strokeColor_, CompositeOp::Normal, &memento_, &opDirty_,
+                         ctx_->selectionClip()};
     op_->beginStroke(opctx);
     stroking_ = true;
     sendEvent(e);

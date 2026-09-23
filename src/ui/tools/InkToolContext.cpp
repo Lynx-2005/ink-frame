@@ -27,6 +27,13 @@ void ToolContext::setPrimaryColor(const QColor &c) {
     emit colorsChanged();
 }
 
+Selection &ToolContext::selection() { return doc_->selection(); }
+
+const Selection *ToolContext::selectionClip() const {
+    const Selection &s = doc_->selection();
+    return s.isEmpty() ? nullptr : &s;
+}
+
 void ToolContext::setSecondaryColor(const QColor &c) {
     if (!c.isValid() || c == secondary_)
         return;

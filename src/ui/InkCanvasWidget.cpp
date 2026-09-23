@@ -20,6 +20,12 @@ CanvasWidget::CanvasWidget(Document *doc, QWidget *parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     view_.setDocSize(double(doc_->image().width()), double(doc_->image().height()));
+    antsTimer_ = new QTimer(this);
+    antsTimer_->setInterval(110);
+    connect(antsTimer_, &QTimer::timeout, this, [this] {
+        antsPhase_ = (antsPhase_ + 1) % 8;
+        update();
+    });
 }
 
 void CanvasWidget::setToolManager(ToolManager *tools) {
@@ -30,6 +36,12 @@ void CanvasWidget::setToolManager(ToolManager *tools) {
             update();
         });
     }
+    if (ctx_) {
+        connect(ctx_, &ToolContext::selectionChanged, this, [this] {
+            updateAnts();
+            update();
+        });
+    }
     updateCursor();
 }
 
@@ -37,6 +49,16 @@ void CanvasWidget::setToolContext(ToolContext *ctx) {
     ctx_ = ctx;
     if (ctx_)
         ctx_->setHost(this);
+}
+
+void CanvasWidget::updateAnts() {
+    if (!antsTimer_)
+        return;
+    const bool active = ctx_ && !ctx_->doc()->selection().isEmpty();
+    if (active && !antsTimer_->isActive())
+        antsTimer_->start();
+    else if (!active && antsTimer_->isActive())
+        antsTimer_->stop();
 }
 
 void CanvasWidget::updateCursor() {
@@ -271,6 +293,25 @@ void CanvasWidget::paintGL() {
         info.hover = hover_;
         info.hoverPos = {hoverPos_.x(), hoverPos_.y()};
         tool->paintOverlay(p, info);
+    }
+    // marching ants for the active selection (drawn last: it is UI chrome)
+    if (!doc_->selection().isEmpty()) {
+        const auto &segments = doc_->selection().outline();
+        if (!segments.empty()) {
+            QPainterPath ants;
+            for (const auto &s : segments) {
+                ants.moveTo(s[0], s[1]);
+                ants.lineTo(s[2], s[3]);
+            }
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(QColor(0, 0, 0, 200), 0));
+            p.drawPath(ants);
+            QPen light(QColor(255, 255, 255, 235), 0, Qt::CustomDashLine);
+            light.setDashPattern({4.0, 4.0});
+            light.setDashOffset(double(antsPhase_));
+            p.setPen(light);
+            p.drawPath(ants);
+        }
     }
     p.restore(); // un-clip
     // card edge highlight

@@ -1,4 +1,5 @@
 #include "ui/tools/InkToolManager.h"
+#include "ui/tools/InkSelectionTools.h"
 #include "ui/tools/InkTool.h"
 #include "ui/tools/InkToolContext.h"
 #include <QAction>
@@ -71,6 +72,24 @@ void ToolManager::buildActions() {
         ctx_->setStatus(QStringLiteral("Brush size %1 px").arg(int(ctx_->size() + 0.5)));
     });
     windowActions_.append(sizeDown);
+
+    auto *selectAll = new QAction(QStringLiteral("Select all"), this);
+    selectAll->setShortcut(QKeySequence::SelectAll);
+    selectAll->setToolTip(QStringLiteral("Select all (Ctrl+A)"));
+    connect(selectAll, &QAction::triggered, this, [this] { ink::selectAll(*ctx_); });
+    windowActions_.append(selectAll);
+
+    auto *deselect = new QAction(QStringLiteral("Deselect"), this);
+    deselect->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
+    deselect->setToolTip(QStringLiteral("Deselect (Ctrl+Shift+A)"));
+    connect(deselect, &QAction::triggered, this, [this] { ink::deselect(*ctx_); });
+    windowActions_.append(deselect);
+
+    auto *invert = new QAction(QStringLiteral("Invert selection"), this);
+    invert->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I));
+    invert->setToolTip(QStringLiteral("Invert selection (Ctrl+Shift+I)"));
+    connect(invert, &QAction::triggered, this, [this] { ink::invertSelection(*ctx_); });
+    windowActions_.append(invert);
 }
 
 Tool *ToolManager::ensureTool(const QString &id) {

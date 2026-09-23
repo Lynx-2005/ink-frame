@@ -10,6 +10,8 @@ namespace ink {
 
 enum class CompositeOp { Normal, Erase, Multiply, Screen, Behind };
 
+class Selection;
+
 class PaintDevice {
 public:
     PaintDevice() = default;
@@ -20,8 +22,9 @@ public:
     void setPixel(int x, int y, PixelRGBA8 p, TileMemento *m = nullptr);
 
     // Fill rect with color (honours erase->clear). Returns dirty rect.
+    // `clip` restricts writes to a selection's coverage (nullptr = whole rect).
     Rect fillRect(const Rect &r, PixelRGBA8 color, CompositeOp op = CompositeOp::Normal,
-                  TileMemento *m = nullptr);
+                  TileMemento *m = nullptr, const Selection *clip = nullptr);
     // Composite src-over tile region from another device.
     Rect blit(const PaintDevice &src, int dx, int dy, float opacity = 1.0f,
               CompositeOp op = CompositeOp::Normal, TileMemento *m = nullptr);
@@ -35,7 +38,7 @@ public:
     // maskSize x maskSize float mask in [0,1], centered at (cx,cy).
     Rect applyDab(float cx, float cy, const float *mask, int maskSize,
                   PixelRGBA8 color, float opacity, CompositeOp op,
-                  TileMemento *m = nullptr);
+                  TileMemento *m = nullptr, const Selection *clip = nullptr);
 
     // Bulk RGBA read of rect into a w*h*4 buffer (for canvas upload).
     // Single lock + memcpy per tile — use instead of per-pixel pixel().

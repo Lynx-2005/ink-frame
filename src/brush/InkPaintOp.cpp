@@ -96,11 +96,11 @@ void PixelBrushOp::stampDab(const Dab &d) {
     Rect dabRect;
     if (ns == bs) {
         dabRect = ctx_.device->applyDab(d.x, d.y, base.data(), bs, ctx_.color, effOpacity,
-                                        ctx_.composite, ctx_.memento);
+                                        ctx_.composite, ctx_.memento, ctx_.selection);
     } else {
         auto m = resampleMask(base, bs, ns);
         dabRect = ctx_.device->applyDab(d.x, d.y, m.data(), ns, ctx_.color, effOpacity,
-                                        ctx_.composite, ctx_.memento);
+                                        ctx_.composite, ctx_.memento, ctx_.selection);
     }
     if (ctx_.dirtyAccum) *ctx_.dirtyAccum = uniteRect(*ctx_.dirtyAccum, dabRect);
 }
