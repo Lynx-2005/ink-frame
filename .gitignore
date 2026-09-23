@@ -1,0 +1,17 @@
+# build trees
+build/
+build-qt/
+build-*/
+cmake-build-*/
+
+# local Qt install log
+aqtinstall.log
+
+# read-only Krita reference checkout (GPL; never compiled or committed)
+krita-reference/
+
+# editor / OS noise
+*.swp
+*~
+.DS_Store
+compile_commands.json
