@@ -4,6 +4,7 @@
 // - each stroke = begin/record/commit; undo = restore mementos LIFO
 // - coalesces per-tile first-touch so undo is O(dirty tiles)
 #include "core/InkTileStore.h"
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -32,6 +33,10 @@ class UndoStack {
 public:
     explicit UndoStack(size_t limit = 100) : limit_(limit) {}
     void push(StrokeCommand cmd);
+    // Structural action with no pixel mementos: undo/redo run the two
+    // closures. Used by layer-tree edits (add/remove/reorder/group/rename/
+    // opacity/blend) so Ctrl+Z covers them like a stroke does.
+    void pushAction(std::string name, std::function<void()> redo, std::function<void()> undo);
     bool canUndo() const { return !undo_.empty(); }
     bool canRedo() const { return !redo_.empty(); }
     const std::string &undoName() const;
@@ -42,7 +47,9 @@ public:
     size_t undoDepth() const { return undo_.size(); }
 private:
     size_t limit_;
-    std::vector<StrokeCommand> undo_, redo_;
+    // Deque: dropping the oldest entry is O(1). The old vector erased from
+    // the front, moving every (heavy: closures + tile vectors) command.
+    std::deque<StrokeCommand> undo_, redo_;
     static const std::string kEmpty;
 };
 

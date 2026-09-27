@@ -131,10 +131,15 @@ public:
     // segment start (already emitted) and including the segment end.
     std::vector<PathPoint> push(const PathPoint &s) {
         std::vector<PathPoint> out;
+        pushTo(s, out);
+        return out;
+    }
+    // Append-only variant: fills the caller's vector (no per-event alloc).
+    void pushTo(const PathPoint &s, std::vector<PathPoint> &out) {
         if (!started_) {
             reset(s);
             out.push_back(s);
-            return out;
+            return;
         }
         PathPoint mid{ (prev_.x + s.x) * 0.5, (prev_.y + s.y) * 0.5,
                        (prev_.sizeMul + s.sizeMul) * 0.5f,
@@ -143,16 +148,19 @@ public:
         out.insert(out.end(), seg.begin(), seg.end());
         prevMid_ = mid;
         prev_ = s;
-        return out;
     }
     // Stroke end: pull the tail to the final raw point.
     std::vector<PathPoint> finish() {
         std::vector<PathPoint> out;
-        if (!started_) return out;
+        finishTo(out);
+        return out;
+    }
+    // Append-only variant of finish().
+    void finishTo(std::vector<PathPoint> &out) {
+        if (!started_) return;
         auto seg = flattenQuad(prevMid_, prev_, prev_, flatness_);
         out.insert(out.end(), seg.begin(), seg.end());
         started_ = false;
-        return out;
     }
     // Quadratic Bezier p0 -> p2 (control p1) flattened to polyline.
     // Includes end point, excludes start point.

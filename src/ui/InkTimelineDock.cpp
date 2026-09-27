@@ -2,6 +2,7 @@
 #include "ui/InkDocument.h"
 #include "ui/InkIcons.h"
 #include "ui/InkTheme.h"
+#include "ui/InkCurveEditor.h"
 #include "ui/InkTimelineWidget.h"
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -12,6 +13,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QScrollBar>
+#include <QSplitter>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTimer>
@@ -89,7 +91,10 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
     auto *skipB = mkBtn(IconId::SkipEnd, QStringLiteral("Go to range end"), {});
 
     // cells
-    auto *newCell = mkBtn(IconId::CellPlus, QStringLiteral("New cell at the playhead"), QStringLiteral("N"));
+    auto *newCell = mkBtn(IconId::CellPlus,
+                          QStringLiteral("New cell at the playhead "
+                                         "(inserts after the cell under it)"),
+                          QStringLiteral("N"));
     auto *dupCell = mkBtn(IconId::CellDuplicate, QStringLiteral("Duplicate the active cell"), QStringLiteral("D"));
     auto *delCell = mkBtn(IconId::CellRemove, QStringLiteral("Delete the cell at the playhead"), QStringLiteral("Del"));
 
@@ -145,6 +150,24 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
     followBtn_->setCheckable(true);
     followBtn_->setChecked(true);
 
+    // keyframes, in the order they are used: previous, add, next, preset, graph
+    prevKeyBtn_ = mkBtn(IconId::KeyPrev, QStringLiteral("Previous keyframe on the working layer"),
+                        QStringLiteral("Alt+Left"));
+    addKeyBtn_ = mkBtn(IconId::KeyPlus,
+                       QStringLiteral("Add a keyframe for the working layer at the playhead"),
+                       QStringLiteral("K"));
+    nextKeyBtn_ = mkBtn(IconId::KeyNext, QStringLiteral("Next keyframe on the working layer"),
+                        QStringLiteral("Alt+Right"));
+    delKeyBtn_ = mkBtn(IconId::KeyRemove,
+                       QStringLiteral("Remove the keyframes at the playhead"),
+                       QStringLiteral("Alt+K"));
+    // (The keyframe interpolation PRESET button was removed: the same presets
+    // live in the keyframe right-click menu and as thumbnails in the easing
+    // graph — one home per concept instead of three.)
+    graphBtn_ = mkBtn(IconId::Graph, QStringLiteral("Easing graph (shape the ease between two keyframes)"),
+                      QStringLiteral("G"));
+    graphBtn_->setCheckable(true);
+
     // view
     zoomSlider_ = new QSlider(Qt::Horizontal, bar);
     zoomSlider_->setRange(0, 100);
@@ -182,6 +205,12 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
     bl->addWidget(onionBtn_);
     bl->addWidget(loopBtn_);
     bl->addWidget(followBtn_);
+    bl->addWidget(makeSep(bar));
+    bl->addWidget(prevKeyBtn_);
+    bl->addWidget(addKeyBtn_);
+    bl->addWidget(nextKeyBtn_);
+    bl->addWidget(delKeyBtn_);
+    bl->addWidget(graphBtn_);
     bl->addStretch(1);
     bl->addWidget(zoomSlider_);
     bl->addWidget(zoomLabel_);
@@ -197,7 +226,23 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
     vBar_ = new QScrollBar(Qt::Vertical, mid);
     ml->addWidget(grid_, 1);
     ml->addWidget(vBar_);
-    lay->addWidget(mid, 1);
+
+    curve_ = new CurveEditor(doc, root);
+    curve_->hide();
+
+    // The graph docks to the RIGHT of the grid, not under it: the timeline
+    // keeps its full height for rows, and the graph reads as a compact
+    // inspector beside them (Alight Motion's layout, in InkFrame's chrome).
+    split_ = new QSplitter(Qt::Horizontal, root);
+    split_->setObjectName(QStringLiteral("TimelineSplit"));
+    split_->setChildrenCollapsible(false);
+    split_->setHandleWidth(4);
+    split_->addWidget(mid);
+    split_->addWidget(curve_);
+    split_->setStretchFactor(0, 1);
+    split_->setStretchFactor(1, 0);
+    split_->setSizes({900, 340}); // graph starts ~340px wide, user-resizable
+    lay->addWidget(split_, 1);
 
     // --- footer: horizontal scroll + status strip ---
     auto *bottom = new QWidget(root);
@@ -241,6 +286,7 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
     connect(onionBtn_, &QToolButton::toggled, this, &TimelineDock::onOnionToggled);
     connect(followBtn_, &QToolButton::toggled, this, &TimelineDock::onFollowToggled);
     connect(autoKeyBtn_, &QToolButton::toggled, this, &TimelineDock::onAutoKeyToggled);
+    doc->setAutoKeyEnabled(autoKeyBtn_->isChecked());
     connect(frameSpin_, &QSpinBox::valueChanged, this, &TimelineDock::onFrameRegisterChanged);
     connect(startSpin_, &QSpinBox::valueChanged, this, &TimelineDock::onRangeChanged);
     connect(endSpin_, &QSpinBox::valueChanged, this, &TimelineDock::onRangeChanged);
@@ -249,7 +295,11 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
     connect(fitB, &QToolButton::clicked, this, &TimelineDock::onFitView);
     connect(hBar_, &QScrollBar::valueChanged, this, [this](int v) { grid_->setScroll(v, vBar_->value()); });
     connect(vBar_, &QScrollBar::valueChanged, this, [this](int v) { grid_->setScroll(hBar_->value(), v); });
-    connect(grid_, &TimelineWidget::frameChanged, this, [this](int f) { updateTimecode(); updateStatus(); emit frameChanged(f); });
+    connect(grid_, &TimelineWidget::frameChanged, this, [this](int f) {
+        updateTimecode();
+        updateStatus();
+        emit frameChanged(f);
+    });
     connect(grid_, &TimelineWidget::keyChanged, this, [this] {
         grid_->refresh();
         syncBars();
@@ -257,13 +307,39 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
         emit keyChanged();
     });
     connect(grid_, &TimelineWidget::selectionChanged, this, [this] { updateStatus(); emit keyChanged(); });
-    connect(grid_, &TimelineWidget::layerSelectionChanged, this, &TimelineDock::updateStatus);
+    connect(grid_, &TimelineWidget::layerSelectionChanged, this, [this] {
+        updateStatus();
+        syncKeyButtons();
+        syncGraphTarget();
+        emit currentLayerChanged();
+    });
     connect(grid_, &TimelineWidget::scrollRequest, this, &TimelineDock::onGridScroll);
     connect(grid_, &TimelineWidget::zoomChanged, this, &TimelineDock::onGridZoom);
     connect(grid_, &TimelineWidget::rangeChangeRequested, this, &TimelineDock::onGridRange);
     connect(grid_, &TimelineWidget::trackMenuRequested, this, &TimelineDock::showTrackMenu);
     connect(grid_, &TimelineWidget::laneMenuRequested, this, &TimelineDock::showLaneMenu);
     connect(grid_, &TimelineWidget::rulerMenuRequested, this, &TimelineDock::showRulerMenu);
+    // --- keyframes ---
+    connect(addKeyBtn_, &QToolButton::clicked, this, &TimelineDock::onAddKey);
+    connect(delKeyBtn_, &QToolButton::clicked, this, &TimelineDock::onRemoveKey);
+    connect(prevKeyBtn_, &QToolButton::clicked, this, &TimelineDock::onPrevKey);
+    connect(nextKeyBtn_, &QToolButton::clicked, this, &TimelineDock::onNextKey);
+    connect(graphBtn_, &QToolButton::toggled, this, &TimelineDock::onGraphToggled);
+    connect(grid_, &TimelineWidget::keyFrameMenuRequested, this, &TimelineDock::onKeyMenu);
+    // --- the easing graph -------------------------------------------------
+    // It edits ONE segment of ONE parameter in a normalised box, so it shares no
+    // time axis with the grid: the only coupling is that paging a segment moves
+    // the playhead, and the playhead picks which segment is shown.
+    connect(curve_, &CurveEditor::graphChanged, this, [this] {
+        grid_->refresh();
+        updateTimecode();
+        updateStatus();
+        emit keyChanged();
+    });
+    connect(curve_, &CurveEditor::statusMessage, this, [this](const QString &t) {
+        if (statusLabel_) statusLabel_->setText(t);
+    });
+    syncKeyButtons();
     connect(grid_, &TimelineWidget::addLayerRequested, this, &TimelineDock::onAddLayer);
     connect(grid_, &TimelineWidget::addGroupRequested, this, &TimelineDock::onAddGroup);
     connect(grid_, &TimelineWidget::groupSelectionRequested, this, &TimelineDock::onGroupSelected);
@@ -278,6 +354,18 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
             }
         }
     });
+    connect(grid_, &TimelineWidget::insertCellRequested, this,
+            [this](const QString &trackId, int atFrame) {
+                PaintLayer *l = doc_->findTrack(trackId.toStdString());
+                if (!l || l->locked()) return;
+                if (doc_->insertCell(l, atFrame)) {
+                    doc_->setCurrentLayer(l);
+                    doc_->setCurrentFrame(atFrame);
+                    grid_->setSelection({{trackId, atFrame}});
+                    refreshContent();
+                    emit keyChanged();
+                }
+            });
 
     timer_ = new QTimer(this);
     timer_->setInterval(16);
@@ -292,14 +380,21 @@ TimelineDock::TimelineDock(Document *doc, QWidget *parent)
 
 void TimelineDock::refresh() {
     grid_->refresh();
+    if (curve_ && !curve_->isHidden()) curve_->refresh();
     syncBars();
     syncZoom();
     updateTimecode();
+    syncKeyButtons();
     updateStatus();
 }
 
 void TimelineDock::refreshContent() {
     grid_->invalidateCells();
+    refresh();
+}
+
+void TimelineDock::refreshPixels(const QString &trackId, int key) {
+    grid_->invalidateCell(trackId, key);
     refresh();
 }
 
@@ -314,10 +409,12 @@ void TimelineDock::updateTimecode() {
 }
 
 void TimelineDock::updateStatus() {
-    int layers = 0, folders = 0;
+    int layers = 0, cameras = 0, folders = 0;
     for (const auto &f : doc_->timeline().folders()) {
         ++folders;
-        layers += (int)f.tracks.size();
+        for (const auto &r : f.tracks)
+            if (r.isCamera) ++cameras;
+            else ++layers;
     }
     const int selCells = grid_->selection().size();
     const int selLayers = grid_->selectedLayers().size();
@@ -333,15 +430,32 @@ void TimelineDock::updateStatus() {
     }
     QStringList parts;
     parts << (layers == 1 ? QStringLiteral("1 layer") : QStringLiteral("%1 layers").arg(layers));
+    if (cameras > 0)
+        parts << (cameras == 1 ? QStringLiteral("1 camera")
+                               : QStringLiteral("%1 cameras").arg(cameras));
     if (folders > 1) parts << QStringLiteral("%1 folders").arg(folders);
     if (selCells > 0) parts << QStringLiteral("%1 cells selected").arg(selCells);
     if (selLayers > 0)
         parts << (selLayers == 1 ? QStringLiteral("1 layer selected")
                                  : QStringLiteral("%1 layers selected").arg(selLayers));
     parts << cellInfo;
+    if (CameraLayer *camSt = keyCamera()) {
+        const int keys = camSt->params().keyCount();
+        parts << (keys == 1 ? QStringLiteral("1 camera key")
+                            : QStringLiteral("%1 camera keys").arg(keys));
+    } else if (AdjustmentLayer *a = keyLayer()) {
+        // Short on purpose: the strip is a glance, and the layer's full name is
+        // already in the gutter and in the button tooltips.
+        const int keys = a->params().keyCount();
+        parts << (keys == 1 ? QStringLiteral("1 key") : QStringLiteral("%1 keys").arg(keys));
+    }
     parts << QStringLiteral("%1 frames").arg(doc_->timeline().frameCount());
     parts << QStringLiteral("%1 fps").arg(doc_->timeline().fps());
-    statusLabel_->setText(parts.join(QStringLiteral("  ·  ")));
+    const QString line = parts.join(QStringLiteral("  ·  "));
+    statusLabel_->setText(line);
+    // The strip is the first thing a narrow window clips, and a clipped status
+    // is worse than no status: keep the whole line reachable.
+    statusLabel_->setToolTip(line);
 }
 
 void TimelineDock::syncBars() {
@@ -464,7 +578,20 @@ void TimelineDock::onNewCell() {
     PaintLayer *l = doc_->currentLayer();
     if (!l) return;
     if (l->locked()) return;
-    if (doc_->addBlankKey(l, doc_->currentFrame())) {
+    const int cur = doc_->currentFrame();
+    const int cover = doc_->cellStartAt(l, cur);
+    if (cover < 0) {
+        if (doc_->addBlankKey(l, cur)) {
+            refreshContent();
+            emit keyChanged();
+        }
+        return;
+    }
+    // The playhead sits on a cell: "new cell" becomes an insert right after it,
+    // so the button always lands a cell instead of refusing silently.
+    const int at = doc_->cellEnd(l, cover) + 1;
+    if (doc_->insertCell(l, at)) {
+        doc_->setCurrentFrame(at);
         refreshContent();
         emit keyChanged();
     }
@@ -601,7 +728,11 @@ void TimelineDock::onFollowToggled(bool on) {
 
 void TimelineDock::onAutoKeyToggled(bool on) {
     autoKey_ = on;
+    if (doc_) doc_->setAutoKeyEnabled(on);
     autoKeyBtn_->setIcon(InkIcons::get(IconId::Key, on ? InkTheme::accent() : InkTheme::dim(), 16));
+    autoKeyBtn_->setToolTip(on ? QStringLiteral("Auto-key: painting creates a cell")
+                               : QStringLiteral("Auto-key off: painting needs a key cell"));
+    syncKeyButtons();
 }
 
 void TimelineDock::onFrameRegisterChanged(int f) {
@@ -691,19 +822,400 @@ void TimelineDock::onAddGroup() {
 void TimelineDock::onGroupSelected() {
     const QSet<QString> sel = grid_->selectedLayers();
     if (sel.isEmpty()) return;
-    // tree order keeps the new folder's stack order predictable
-    std::vector<PaintLayer*> members;
+    // tree order keeps the new folder's stack order predictable. Any layer kind
+    // is eligible, so an adjustment layer groups with the layer it animates.
+    std::vector<Layer*> members;
     const auto &folders = doc_->timeline().folders();
     for (const auto &f : folders)
         for (const auto &t : f.tracks)
             if (sel.contains(QString::fromStdString(t.layerId)))
-                if (PaintLayer *l = doc_->findTrack(t.layerId)) members.push_back(l);
+                if (Layer *l = doc_->findLayer(t.layerId)) members.push_back(l);
     GroupLayer *g = doc_->groupSelected(members, {});
     if (!g) return;
     grid_->clearLayerSelection();
     refreshContent();
     emit layersChanged();
     emit keyChanged();
+}
+
+// --- keyframes ---------------------------------------------------------------
+
+// The working layer for keyframe operations: the selected adjustment layer, or
+// whatever adjustment layer is linked to the selected paint layer.
+AdjustmentLayer *TimelineDock::keyLayer() const {
+    // The keyframes live on the working layer itself; the "key layer" is its
+    // compatibility view.
+    if (PaintLayer *l = doc_->currentLayer()) return doc_->adjustmentFor(l);
+    return nullptr;
+}
+
+CameraLayer *TimelineDock::keyCamera() const {
+    for (const QString &id : grid_->selectedLayers())
+        if (CameraLayer *c = doc_->findCamera(id.toStdString())) return c;
+    return nullptr;
+}
+
+void TimelineDock::onAddKey() {
+    const int f = doc_->currentFrame();
+    if (CameraLayer *cam = keyCamera()) {
+        const int n = doc_->keyCameraAt(cam, f);
+        if (n <= 0) {
+            if (statusLabel_)
+                statusLabel_->setText(QStringLiteral("Camera is locked"));
+            return;
+        }
+        if (!curve_->isHidden()) {
+            curve_->setCamera(cam);
+            curve_->refresh();
+        }
+        refreshContent();
+        syncKeyButtons();
+        if (statusLabel_)
+            statusLabel_->setText(QStringLiteral("Keyed camera at frame %1").arg(f));
+        emit keyChanged();
+        return;
+    }
+    if (!keyLayer() && !doc_->currentLayer()) {
+        if (statusLabel_) statusLabel_->setText(QStringLiteral("Select a layer first"));
+        return;
+    }
+    const int n = doc_->keyCurrentLayer(f);
+    if (n <= 0) {
+        if (statusLabel_)
+            statusLabel_->setText(QStringLiteral("Nothing to key — select a layer"));
+        return;
+    }
+    // The keys are now visible on the layer's BAR itself (one diamond per keyed
+    // frame), so there is nothing to expand; the graph follows the same layer.
+    if (AdjustmentLayer *a = keyLayer()) {
+        if (!curve_->isHidden()) {
+            curve_->setAdjustment(a);
+            curve_->refresh();
+        }
+    }
+    refreshContent();
+    syncKeyButtons();
+    if (statusLabel_)
+        statusLabel_->setText(QStringLiteral("Keyed %1 parameter(s) at frame %2").arg(n).arg(f));
+    emit keyChanged();
+}
+
+void TimelineDock::onRemoveKey() {
+    if (CameraLayer *cam = keyCamera()) {
+        const int n = doc_->removeCameraKeysAt(cam, doc_->currentFrame());
+        if (n > 0) {
+            grid_->noteAnimationChanged();
+            refreshContent();
+            syncKeyButtons();
+            if (statusLabel_)
+                statusLabel_->setText(QStringLiteral("Removed %1 camera keyframe(s)").arg(n));
+            emit keyChanged();
+        } else if (statusLabel_) {
+            statusLabel_->setText(QStringLiteral("No camera keyframe at the playhead"));
+        }
+        return;
+    }
+    const int n = doc_->removeKeyCurrentLayer(doc_->currentFrame());
+    if (n > 0) {
+        refreshContent();
+        syncKeyButtons();
+        if (statusLabel_)
+            statusLabel_->setText(QStringLiteral("Removed %1 keyframe(s)").arg(n));
+        emit keyChanged();
+    } else if (statusLabel_) {
+        statusLabel_->setText(QStringLiteral("No keyframe at the playhead on this layer"));
+    }
+}
+
+void TimelineDock::onPrevKey() {
+    if (CameraLayer *cam = keyCamera()) {
+        const int f = doc_->prevCameraKey(cam, doc_->currentFrame());
+        if (f < 0) {
+            if (statusLabel_) statusLabel_->setText(QStringLiteral("No camera keyframe before the playhead"));
+            return;
+        }
+        doc_->setCurrentFrame(f);
+        if (follow_) grid_->ensureFrameVisible(f);
+        if (!curve_->isHidden()) curve_->refresh();
+        grid_->refresh();
+        syncBars();
+        updateTimecode();
+        updateStatus();
+        emit frameChanged(f);
+        return;
+    }
+    const int f = doc_->prevKeyCurrentLayer(doc_->currentFrame());
+    if (f < 0) {
+        if (statusLabel_) statusLabel_->setText(QStringLiteral("No keyframe before the playhead"));
+        return;
+    }
+    doc_->setCurrentFrame(f);
+    if (follow_) grid_->ensureFrameVisible(f);
+    if (!curve_->isHidden()) curve_->refresh();
+    grid_->refresh();
+    syncBars();
+    updateTimecode();
+    updateStatus();
+    emit frameChanged(f);
+}
+
+void TimelineDock::onNextKey() {
+    if (CameraLayer *cam = keyCamera()) {
+        const int f = doc_->nextCameraKey(cam, doc_->currentFrame());
+        if (f < 0) {
+            if (statusLabel_) statusLabel_->setText(QStringLiteral("No camera keyframe after the playhead"));
+            return;
+        }
+        doc_->setCurrentFrame(f);
+        if (follow_) grid_->ensureFrameVisible(f);
+        if (!curve_->isHidden()) curve_->refresh();
+        grid_->refresh();
+        syncBars();
+        updateTimecode();
+        updateStatus();
+        emit frameChanged(f);
+        return;
+    }
+    const int f = doc_->nextKeyCurrentLayer(doc_->currentFrame());
+    if (f < 0) {
+        if (statusLabel_) statusLabel_->setText(QStringLiteral("No keyframe after the playhead"));
+        return;
+    }
+    doc_->setCurrentFrame(f);
+    if (follow_) grid_->ensureFrameVisible(f);
+    if (!curve_->isHidden()) curve_->refresh();
+    grid_->refresh();
+    syncBars();
+    updateTimecode();
+    updateStatus();
+    emit frameChanged(f);
+}
+
+void TimelineDock::applyPreset(int interp, bool easeIn, bool easeOut) {
+    AdjustmentLayer *a = keyLayer();
+    if (!a) return;
+    const int f = doc_->currentFrame();
+    // With keys selected, the preset applies to THOSE; otherwise to the keys
+    // under the playhead, which is what the button means when nothing is picked.
+    QSet<TimelineKey> sel = grid_->keySelection();
+    bool any = false;
+    if (!sel.isEmpty()) {
+        for (const TimelineKey &k : sel) {
+            if (k.adjId != QString::fromStdString(a->stableId())) continue;
+            any |= doc_->applyKeyPreset(a, k.frame, (Interp)interp, easeIn, easeOut);
+        }
+    } else {
+        any = doc_->applyKeyPreset(a, f, (Interp)interp, easeIn, easeOut);
+    }
+    if (any) {
+        refreshContent();
+        if (!curve_->isHidden()) curve_->refresh();
+        emit keyChanged();
+    } else if (statusLabel_) {
+        statusLabel_->setText(QStringLiteral("No keyframe to apply the preset to"));
+    }
+}
+
+void TimelineDock::syncGraphTarget() {
+    if (!curve_ || curve_->isHidden()) return;
+    if (CameraLayer *gcam = keyCamera()) {
+        curve_->setCamera(gcam);
+    } else {
+        curve_->setAdjustment(keyLayer());
+    }
+    curve_->refresh();
+    if (graphBtn_) {
+        const bool cam = keyCamera() != nullptr;
+        graphBtn_->setToolTip(cam ? QStringLiteral("Camera easing graph (shape the ease between two "
+                                                   "camera keyframes)  (G)")
+                                 : QStringLiteral("Easing graph (shape the ease between two keyframes)  (G)"));
+    }
+}
+
+void TimelineDock::onGraphToggled(bool on) {
+    curve_->setVisible(on);
+    if (on) syncGraphTarget();
+    if (statusLabel_)
+        statusLabel_->setText(
+            on ? (keyCamera()
+                      ? QStringLiteral("Camera easing graph — drag a handle to shape this camera "
+                                       "move, \u2190/\u2192 to page between segments")
+                      : QStringLiteral("Easing graph — drag a handle to shape this segment, click a "
+                                       "preset to apply it, \u2190/\u2192 to page between segments"))
+               : QString());
+}
+
+// A bar diamond stands for every parameter keyed at that frame, so the menu
+// acts on the frame, not on one hidden parameter row. Interpolation is applied
+// to all of them at once — which is what an animator wants: one easing per beat.
+// A bar diamond stands for every parameter keyed at that frame, so the menu acts
+// on the frame rather than on a hidden per-parameter row. Document::applyKeyPreset
+// already broadcasts over keysAt(frame), which makes each entry one undo step.
+void TimelineDock::onKeyMenu(const QPoint &globalPos, const QString &adjId, int frame) {
+    if (QMenu *m = buildKeyMenu(adjId, frame)) m->exec(globalPos);
+}
+
+QMenu *TimelineDock::buildKeyMenu(const QString &adjId, int frame) {
+    // Cameras share the same diamond menu (keyframes live on the camera).
+    if (CameraLayer *cam = doc_->findCamera(adjId.toStdString())) {
+        const std::vector<ParamId> cids = cam->params().keysAt(frame);
+        if (cids.empty()) return nullptr;
+        auto *m = new QMenu(this);
+        QAction *title = m->addAction(QStringLiteral("Camera keyframe · frame %1").arg(frame));
+        title->setEnabled(false);
+        m->addSeparator();
+        const ScalarChannel *ch = cam->params().channel(cids.front());
+        const ScalarKey *k = ch ? ch->keyAt(frame) : nullptr;
+        const Interp cur = k ? k->interp : Interp::Linear;
+        const bool flat = k && std::abs(k->outSpeed) < 1e-6 && std::abs(k->inSpeed) < 1e-6;
+        struct EaseItem { const char *label; Interp mode; bool in; bool out; };
+        static const EaseItem items[] = {
+            {"Linear", Interp::Linear, false, false},
+            {"Hold", Interp::Hold, false, false},
+            {"Ease In", Interp::Bezier, true, false},
+            {"Ease Out", Interp::Bezier, false, true},
+            {"Ease In/Out", Interp::Bezier, true, true},
+        };
+        for (const EaseItem &e : items) {
+            QAction *act = m->addAction(QString::fromUtf8(e.label));
+            act->setCheckable(true);
+            bool checked = (cur == e.mode);
+            if (checked && e.mode == Interp::Bezier) {
+                const bool zin = k && std::abs(k->inSpeed) < 1e-6;
+                const bool zout = k && std::abs(k->outSpeed) < 1e-6;
+                checked = (e.in && e.out) ? flat : (e.in ? (zin && !zout) : (zout && !zin));
+            }
+            act->setChecked(checked);
+            connect(act, &QAction::triggered, this, [this, cam, frame, e] {
+                doc_->applyCameraPreset(cam, frame, e.mode, e.in, e.out);
+                grid_->noteAnimationChanged();
+                refreshContent();
+                emit keyChanged();
+            });
+        }
+        m->addSeparator();
+        QAction *del = m->addAction(QStringLiteral("Delete keyframe"));
+        connect(del, &QAction::triggered, this, [this, cam, cids, frame] {
+            for (ParamId id : cids) doc_->removeCameraKey(cam, id, frame);
+            grid_->noteAnimationChanged();
+            refreshContent();
+            emit keyChanged();
+        });
+        m->addSeparator();
+        QAction *graph = m->addAction(QStringLiteral("Open easing graph"));
+        connect(graph, &QAction::triggered, this, [this, cam] {
+            if (curve_->isHidden()) graphBtn_->setChecked(true);
+            curve_->setCamera(cam);
+            curve_->refresh();
+        });
+        return m;
+    }
+    AdjustmentLayer *a = doc_->findAdjustment(adjId.toStdString());
+    if (!a) return nullptr;
+    const std::vector<ParamId> ids = a->params().keysAt(frame);
+    if (ids.empty()) return nullptr;
+
+    // Heap-owned: the caller either exec()s it or reads its entries, and a
+    // stack QMenu could not outlive this function.
+    auto *m = new QMenu(this);
+    QAction *title = m->addAction(QStringLiteral("Keyframe · frame %1").arg(frame));
+    title->setEnabled(false);
+    m->addSeparator();
+
+    const ScalarChannel *ch = a->params().channel(ids.front());
+    const ScalarKey *k = ch ? ch->keyAt(frame) : nullptr;
+    const Interp cur = k ? k->interp : Interp::Linear;
+    const bool flat = k && std::abs(k->outSpeed) < 1e-6 && std::abs(k->inSpeed) < 1e-6;
+
+    struct EaseItem { const char *label; Interp mode; bool in; bool out; };
+    static const EaseItem items[] = {
+        {"Linear",      Interp::Linear, false, false},
+        {"Hold",        Interp::Hold,   false, false},
+        {"Ease In",     Interp::Bezier, true,  false},
+        {"Ease Out",    Interp::Bezier, false, true},
+        {"Ease In/Out", Interp::Bezier, true,  true},
+    };
+    for (const EaseItem &e : items) {
+        QAction *act = m->addAction(QString::fromUtf8(e.label));
+        act->setCheckable(true);
+        // A bezier key with both speeds zero is Easy Ease; the one-sided variants
+        // read from the handle that is zeroed.
+        bool checked = (cur == e.mode);
+        if (checked && e.mode == Interp::Bezier) {
+            const bool zin = k && std::abs(k->inSpeed) < 1e-6;
+            const bool zout = k && std::abs(k->outSpeed) < 1e-6;
+            checked = (e.in && e.out) ? flat : (e.in ? (zin && !zout) : (zout && !zin));
+        }
+        act->setChecked(checked);
+        connect(act, &QAction::triggered, this, [this, a, frame, e] {
+            doc_->applyKeyPreset(a, frame, e.mode, e.in, e.out);
+            grid_->noteAnimationChanged();
+            refreshContent();
+            if (!curve_->isHidden()) curve_->refresh();
+            emit keyChanged();
+        });
+    }
+    m->addSeparator();
+    QAction *graph = m->addAction(QStringLiteral("Open easing graph"));
+    connect(graph, &QAction::triggered, this, [this, a] {
+        if (curve_->isHidden()) graphBtn_->setChecked(true);
+        curve_->setAdjustment(a);
+        curve_->refresh();
+    });
+    m->addSeparator();
+    QAction *del = m->addAction(QStringLiteral("Delete keyframe"));
+    connect(del, &QAction::triggered, this, [this, a, ids, frame] {
+        for (ParamId id : ids) doc_->removeParamKey(a, id, frame);
+        grid_->noteAnimationChanged();
+        refreshContent();
+        emit keyChanged();
+    });
+    return m;
+}
+
+void TimelineDock::syncKeyButtons() {
+    if (CameraLayer *cam = keyCamera()) {
+        const bool camAnimated = cam->params().keyCount() > 0;
+        if (addKeyBtn_) {
+            addKeyBtn_->setEnabled(!cam->locked());
+            addKeyBtn_->setToolTip(QStringLiteral("Add a camera keyframe at the playhead"));
+            addKeyBtn_->setIcon(InkIcons::get(IconId::KeyPlus, InkTheme::recordArm(), 16));
+            addKeyBtn_->setObjectName(QStringLiteral("RecordArm"));
+        }
+        if (delKeyBtn_) delKeyBtn_->setEnabled(camAnimated);
+        if (prevKeyBtn_) prevKeyBtn_->setEnabled(camAnimated);
+        if (nextKeyBtn_) nextKeyBtn_->setEnabled(camAnimated);
+        return;
+    }
+    AdjustmentLayer *a = keyLayer();
+    const bool has = a != nullptr || doc_->currentLayer() != nullptr;
+    if (addKeyBtn_) {
+        addKeyBtn_->setEnabled(has);
+        addKeyBtn_->setToolTip(
+            a ? QStringLiteral("Add a keyframe at the playhead on \"%1\"  (K)")
+                    .arg(QString::fromStdString(a->name()))
+              : QStringLiteral("Add a keyframe at the playhead on the selected layer  (K)"));
+    }
+    const bool animated = a && a->params().keyCount() > 0;
+    if (delKeyBtn_) delKeyBtn_->setEnabled(animated);
+    if (prevKeyBtn_) prevKeyBtn_->setEnabled(animated);
+    if (nextKeyBtn_) nextKeyBtn_->setEnabled(animated);
+    if (autoKeyBtn_) {
+        // Arming Auto-key is what makes a tool drag write keys instead of pixels
+        // — say so, because it changes what the transform tool does.
+        autoKeyBtn_->setToolTip(
+            "Auto-key: painting creates a cell, and dragging a transform with "
+            "\"Record as keyframes\" on writes keyframes instead of pixels");
+    }
+    if (autoKeyBtn_ && autoKeyBtn_->isChecked() && a) {
+        // A red rim on the key button while recording is armed: the one state
+        // that changes what the tools do has to be visible at a glance.
+        addKeyBtn_->setIcon(InkIcons::get(IconId::KeyPlus, InkTheme::recordArm(), 16));
+        addKeyBtn_->setObjectName(QStringLiteral("RecordArm"));
+    } else if (addKeyBtn_) {
+        addKeyBtn_->setIcon(InkIcons::get(IconId::KeyPlus, InkTheme::dim(), 16));
+        addKeyBtn_->setObjectName(QString());
+    }
 }
 
 void TimelineDock::onUngroup() {
@@ -736,8 +1248,19 @@ void TimelineDock::onRename(const QString &id) {
                                                 QStringLiteral("Name:"), QLineEdit::Normal,
                                                 QString::fromStdString(g->name()));
         if (n.isEmpty()) return;
+        auto edit = doc_->editGuard();
         g->setName(n.toStdString());
         doc_->timeline().renameFolder(fid, n.toStdString());
+        refreshContent();
+        emit layersChanged();
+        return;
+    }
+    if (CameraLayer *cam = doc_->findCamera(id.toStdString())) {
+        const QString n = QInputDialog::getText(this, QStringLiteral("Camera name"),
+                                                QStringLiteral("Name:"), QLineEdit::Normal,
+                                                QString::fromStdString(cam->name()));
+        if (n.isEmpty()) return;
+        doc_->renameCamera(cam, n.toStdString());
         refreshContent();
         emit layersChanged();
         return;
@@ -748,13 +1271,83 @@ void TimelineDock::onRename(const QString &id) {
                                             QStringLiteral("Name:"), QLineEdit::Normal,
                                             QString::fromStdString(l->name()));
     if (n.isEmpty()) return;
+    auto edit = doc_->editGuard();
     l->setName(n.toStdString());
     doc_->touchLayer(l, doc_->currentFrame());
     refreshContent();
     emit layersChanged();
 }
 
+void TimelineDock::showCameraMenu(const QPoint &globalPos, CameraLayer *cam) {
+    if (!cam) return;
+    QMenu m;
+    const QString scopeName = cam->scope() == CameraScope::Global   ? QStringLiteral("Global")
+                              : cam->scope() == CameraScope::Folder ? QStringLiteral("Group")
+                                                                    : QStringLiteral("Layer");
+    QAction *title = m.addAction(QStringLiteral("Camera (%1) \u2014 %2")
+                                     .arg(scopeName, QString::fromStdString(cam->name())));
+    title->setEnabled(false);
+    m.addSeparator();
+    m.addAction(QStringLiteral("Key camera at the playhead"), this, [this, cam] {
+        doc_->keyCameraAt(cam, doc_->currentFrame());
+        refreshContent();
+        emit keyChanged();
+    });
+    m.addAction(QStringLiteral("Remove camera keys at the playhead"), this, [this, cam] {
+        if (doc_->removeCameraKeysAt(cam, doc_->currentFrame()) > 0) {
+            refreshContent();
+            emit keyChanged();
+        }
+    });
+    m.addAction(QStringLiteral("Open easing graph"), this, [this, cam] {
+        if (curve_->isHidden()) graphBtn_->setChecked(true);
+        curve_->setCamera(cam);
+        curve_->refresh();
+    });
+    m.addSeparator();
+    QAction *visA = m.addAction(cam->visible() ? QStringLiteral("Disable camera")
+                                               : QStringLiteral("Enable camera"));
+    connect(visA, &QAction::triggered, this, [this, cam] {
+        auto edit = doc_->editGuard();
+        cam->setVisible(!cam->visible());
+        doc_->touchCamera(cam);
+        refreshContent();
+        emit keyChanged();
+    });
+    QAction *lockA = m.addAction(cam->locked() ? QStringLiteral("Unlock camera")
+                                               : QStringLiteral("Lock camera"));
+    connect(lockA, &QAction::triggered, this, [this, cam] {
+        auto edit = doc_->editGuard();
+        cam->setLocked(!cam->locked());
+        refresh();
+        emit keyChanged();
+    });
+    m.addSeparator();
+    m.addAction(QStringLiteral("Rename camera\u2026"), this, [this, cam] {
+        onRename(QString::fromStdString(cam->stableId()));
+    });
+    m.addSeparator();
+    m.addAction(QStringLiteral("Delete camera"), this, [this, cam] {
+        if (doc_->deleteCamera(cam)) {
+            refreshContent();
+            emit layersChanged();
+            emit keyChanged();
+        }
+    });
+    m.exec(globalPos);
+}
+
 void TimelineDock::tick() {
+    // The easing graph shows the segment under the PLAYHEAD and the transform
+    // panel reads values AT it, so both are stale the moment it moves. Frame
+    // changes arrive from many places (transport, scrub, key jumps, cell menus,
+    // playback), so rather than hook each one, poll the one number that matters
+    // here: an int compare per 16ms, and no path can be forgotten.
+    const int now = doc_->currentFrame();
+    if (now != lastFollowFrame_) {
+        lastFollowFrame_ = now;
+        if (!curve_->isHidden()) curve_->followPlayhead();
+    }
     if (!doc_->playback().isPlaying()) return;
     auto [f, changed] = doc_->playback().advance(0.016);
     if (changed) {
@@ -787,6 +1380,24 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
             doc_->setCurrentFolder(g);
             onAddLayer();
         });
+        m.addAction(QStringLiteral("Add Camera for Group"), this, [this, g] {
+            if (CameraLayer *cam = doc_->createCameraForFolder(g, {})) {
+                doc_->keyCameraAt(cam, doc_->currentFrame());
+                grid_->setSelectedLayers({QString::fromStdString(cam->stableId())});
+                refreshContent();
+                emit layersChanged();
+                emit keyChanged();
+            }
+        });
+        m.addAction(QStringLiteral("Add Global Camera"), this, [this] {
+            if (CameraLayer *cam = doc_->createGlobalCamera({})) {
+                doc_->keyCameraAt(cam, doc_->currentFrame());
+                grid_->setSelectedLayers({QString::fromStdString(cam->stableId())});
+                refreshContent();
+                emit layersChanged();
+                emit keyChanged();
+            }
+        });
         m.addAction(QStringLiteral("Select every layer in this folder"), this, [this, g] {
             QSet<QString> ids;
             for (auto &c : g->children())
@@ -798,6 +1409,7 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
         m.addAction(QStringLiteral("Rename folder…"), this, [this, id] { onRename(id); });
         QAction *visA = m.addAction(g->visible() ? QStringLiteral("Hide folder") : QStringLiteral("Show folder"));
         connect(visA, &QAction::triggered, this, [this, g] {
+            auto edit = doc_->editGuard();
             g->setVisible(!g->visible());
             doc_->frameCache().invalidateAll();
             refreshContent();
@@ -805,6 +1417,7 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
         });
         QAction *lockA = m.addAction(g->locked() ? QStringLiteral("Unlock folder") : QStringLiteral("Lock folder"));
         connect(lockA, &QAction::triggered, this, [this, g] {
+            auto edit = doc_->editGuard();
             g->setLocked(!g->locked());
             refresh();
             emit keyChanged();
@@ -849,22 +1462,32 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
         return;
     }
 
+    if (CameraLayer *camMenu = doc_->findCamera(id.toStdString())) {
+        showCameraMenu(globalPos, camMenu);
+        return;
+    }
     PaintLayer *l = doc_->findTrack(id.toStdString());
     if (!l) return;
     doc_->setCurrentLayer(l);
     GroupLayer *owner = doc_->image().findFolderOf(l);
     if (owner) doc_->setCurrentFolder(owner);
 
-    m.addAction(QStringLiteral("New cell at the playhead"), this, [this, l] {
-        if (doc_->addBlankKey(l, doc_->currentFrame())) {
-            refreshContent();
-            emit keyChanged();
-        }
-    });
+    // Same rule as the toolbar button: on a free frame it drops a cell at the
+    // playhead, on a cell it inserts one right after it (never a dead click).
+    m.addAction(QStringLiteral("New cell at the playhead"), this, [this] { onNewCell(); });
     m.addAction(QStringLiteral("New layer above"), this, [this, l] {
         doc_->setCurrentLayer(l);
         if (auto *g = doc_->image().findFolderOf(l)) doc_->setCurrentFolder(g);
         onAddLayer();
+    });
+    m.addAction(QStringLiteral("Add Camera Layer"), this, [this, l] {
+        if (CameraLayer *cam = doc_->createCameraForLayer(l, {})) {
+            doc_->keyCameraAt(cam, doc_->currentFrame());
+            grid_->setSelectedLayers({QString::fromStdString(cam->stableId())});
+            refreshContent();
+            emit layersChanged();
+            emit keyChanged();
+        }
     });
     m.addSeparator();
 
@@ -897,7 +1520,7 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
         QAction *a = moveMenu->addAction(QString::fromStdString(f->name()));
         a->setEnabled(f != owner);
         connect(a, &QAction::triggered, this, [this, l, f] {
-            if (doc_->moveTrackToFolder(l, f)) {
+            if (doc_->moveLayerToFolder(l, f)) {
                 refreshContent();
                 emit layersChanged();
                 emit keyChanged();
@@ -915,10 +1538,10 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
             if (orderFolder->children()[(size_t)i].get() == static_cast<Layer *>(l)) { stackIdx = i; break; }
     }
     QAction *upA = orderMenu->addAction(QStringLiteral("Move layer up"), this, [this, l] {
-        if (doc_->moveTrackInFolder(l, -1)) { refreshContent(); emit layersChanged(); emit keyChanged(); }
+        if (doc_->moveLayerInFolder(l, -1)) { refreshContent(); emit layersChanged(); emit keyChanged(); }
     });
     QAction *downA = orderMenu->addAction(QStringLiteral("Move layer down"), this, [this, l] {
-        if (doc_->moveTrackInFolder(l, 1)) { refreshContent(); emit layersChanged(); emit keyChanged(); }
+        if (doc_->moveLayerInFolder(l, 1)) { refreshContent(); emit layersChanged(); emit keyChanged(); }
     });
     if (stackIdx <= 0) {
         upA->setEnabled(false);
@@ -930,6 +1553,13 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
     }
 
     m.addSeparator();
+    // Keyframes live on the layer itself now; this is the entry someone
+    // hunting for "how do I animate this" will find.
+    m.addAction(QStringLiteral("Key this layer at the playhead"), this, [this, l] {
+        doc_->setCurrentLayer(l);
+        onAddKey();
+    });
+    m.addSeparator();
     m.addAction(QStringLiteral("Rename layer…"), this, [this, id] { onRename(id); });
     m.addAction(QStringLiteral("Duplicate layer"), this, [this, l] {
         doc_->duplicateTrack(l);
@@ -940,6 +1570,7 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
     m.addSeparator();
     QAction *visA = m.addAction(l->visible() ? QStringLiteral("Hide layer") : QStringLiteral("Show layer"));
     connect(visA, &QAction::triggered, this, [this, l] {
+        auto edit = doc_->editGuard();
         l->setVisible(!l->visible());
         doc_->frameCache().invalidateAll();
         refreshContent();
@@ -947,6 +1578,7 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
     });
     QAction *lockA = m.addAction(l->locked() ? QStringLiteral("Unlock layer") : QStringLiteral("Lock layer"));
     connect(lockA, &QAction::triggered, this, [this, l] {
+        auto edit = doc_->editGuard();
         l->setLocked(!l->locked());
         refresh();
         emit keyChanged();
@@ -957,6 +1589,7 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
         a->setCheckable(true);
         a->setChecked(int(l->opacity() * 100) == pct);
         connect(a, &QAction::triggered, this, [this, l, pct] {
+            auto edit = doc_->editGuard();
             l->setOpacity(pct / 100.0f);
             doc_->frameCache().invalidateAll();
             refresh();
@@ -971,6 +1604,7 @@ void TimelineDock::showTrackMenu(const QPoint &globalPos, const QString &id) {
         a->setCheckable(true);
         a->setChecked(l->blend() == bm.b);
         connect(a, &QAction::triggered, this, [this, l, b = bm.b] {
+            auto edit = doc_->editGuard();
             l->setBlend(b);
             doc_->frameCache().invalidateAll();
             refresh();
@@ -1091,14 +1725,30 @@ void TimelineDock::showLaneMenu(const QPoint &globalPos, const QString &trackId,
         m.addSeparator();
     }
 
-    QAction *newHere = cellOp(m.addAction(QStringLiteral("New cell here  (N)"), this, [this, l, frame] {
-        if (doc_->addBlankKey(l, frame)) { refreshContent(); emit keyChanged(); }
-    }));
-    // A cell already starting exactly here means addBlankKey() would refuse:
-    // grey it out and say why instead of letting the click do nothing.
-    if (!locked && l->hasKeyAt(frame)) {
-        newHere->setEnabled(false);
-        newHere->setToolTip(QStringLiteral("A cell already starts at frame %1").arg(frame));
+    if (covering < 0) {
+        cellOp(m.addAction(QStringLiteral("New cell here  (N)"), this, [this, l, frame] {
+            if (doc_->addBlankKey(l, frame)) { refreshContent(); emit keyChanged(); }
+        }));
+    } else {
+        // A new cell always fits between two cells: at the clicked cell's start
+        // (before it) or right after its end (after it), later cells rippling right.
+        cellOp(m.addAction(QStringLiteral("Insert cell before  (ripples this layer)"), this,
+                           [this, l, covering] {
+            if (doc_->insertCell(l, covering)) {
+                doc_->setCurrentFrame(covering);
+                refreshContent();
+                emit keyChanged();
+            }
+        }));
+        const int after = doc_->cellEnd(l, covering) + 1;
+        cellOp(m.addAction(QStringLiteral("Insert cell after  (ripples this layer)"), this,
+                           [this, l, after] {
+            if (doc_->insertCell(l, after)) {
+                doc_->setCurrentFrame(after);
+                refreshContent();
+                emit keyChanged();
+            }
+        }));
     }
     // "Active cell" is the one at the playhead; the clicked frame is the
     // DESTINATION. (Using the clicked cell as its own source made this a no-op.)

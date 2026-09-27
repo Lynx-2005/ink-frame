@@ -2,18 +2,21 @@
 #include "io/InkProject.h"
 #include "ui/InkCanvasWidget.h"
 #include "ui/InkDocument.h"
+#include "ui/InkLayerPanel.h"
 #include "ui/InkTheme.h"
 #include "ui/InkTimelineDock.h"
+#include "ui/InkTimelineWidget.h"
 #include "ui/InkToolBox.h"
 #include "ui/InkToolOptionsBar.h"
 #include "ui/InkTopBar.h"
 #include "ui/tools/InkToolContext.h"
 #include "ui/tools/InkToolManager.h"
+#include "ui/tools/InkTransformTool.h"
 #include <QAction>
 #include <QDir>
 #include <QFileDialog>
-#include <QMenuBar>
 #include <QProcess>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 
 namespace ink {
@@ -37,9 +40,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(topBar_, &TopBar::undoRequested, this, &MainWindow::onUndo);
     connect(topBar_, &TopBar::redoRequested, this, &MainWindow::onRedo);
     connect(topBar_, &TopBar::zoomPicked, this, &MainWindow::onZoomPicked);
-    connect(topBar_, &TopBar::menuRequested, this, [this] { menuBar()->setVisible(!menuBar()->isVisible()); });
+    connect(topBar_, &TopBar::rotatePicked, this, &MainWindow::onRotatePicked);
 
-    // --- toolbox | canvas card ---
+    // --- toolbox | canvas card | layer panel ---
     toolBox_ = new ToolBox(tools_, toolCtx_, this);
     auto *center = new QWidget(this);
     auto *hl = new QHBoxLayout(center);
@@ -56,6 +59,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     cl->addWidget(canvas_, 1);
     hl->addWidget(canvasCard, 1);
 
+    // The Layer panel edits the layer stack of the cell under the playhead on
+    // the current track. It is a plain widget (not a dock) exactly like the
+    // toolbox, so canvas focus behaviour stays unchanged.
+    layerPanel_ = new LayerPanel(doc_, center);
+    hl->addWidget(layerPanel_);
+
     // Wrap center in a plain widget (not a dock) so canvas keeps focus.
     auto *mid = new QWidget(this);
     auto *ml = new QVBoxLayout(mid);
@@ -69,22 +78,104 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     addDockWidget(Qt::BottomDockWidgetArea, timeline_);
     timeline_->setMinimumHeight(260);
 
-    auto *file = menuBar()->addMenu(QStringLiteral("&File"));
-    file->addAction(QStringLiteral("Export PNG sequence…"), this, &MainWindow::onExportPngSeq);
-    file->addAction(QStringLiteral("Export MP4 (ffmpeg)…"), this, &MainWindow::onExportMp4);
-    auto *edit = menuBar()->addMenu(QStringLiteral("&Edit"));
-    edit->addAction(QStringLiteral("Undo"), this, &MainWindow::onUndo)->setShortcut(QKeySequence::Undo);
-    edit->addAction(QStringLiteral("Redo"), this, &MainWindow::onRedo)->setShortcut(QKeySequence::Redo);
-    menuBar()->setVisible(false); // hamburger in TopBar toggles
+    // --- layer panel toggle: top-bar three-dot button + F7, one state ---
+    layersAction_ = new QAction(QStringLiteral("Layer panel"), this);
+    layersAction_->setCheckable(true);
+    layersAction_->setShortcut(QKeySequence(QStringLiteral("F7")));
+    addAction(layersAction_);
+    // The panel's visibility is the single source of truth and the two controls
+    // only MIRROR it. setChecked() on a checkable QAction re-emits `toggled`,
+    // so mirroring into it unblocked re-entered this setter; the button and the
+    // action then drifted off the panel's real visibility, which is what made
+    // the toggle take two or three presses to take effect. Block the signal and
+    // skip no-op writes, so syncPanelControls is idempotent and safe to call
+    // from either control.
+    layerPanelVisible_ = true;
+    auto syncPanelControls = [this](bool on) {
+        layerPanelVisible_ = on;
+        layerPanel_->setVisible(on);
+        topBar_->setLayersChecked(on);
+        if (layersAction_->isChecked() != on) {
+            const QSignalBlocker block(layersAction_);
+            layersAction_->setChecked(on);
+        }
+    };
+    connect(topBar_, &TopBar::layersToggled, this, syncPanelControls);
+    connect(layersAction_, &QAction::toggled, this,
+            [this, syncPanelControls] { syncPanelControls(!layerPanelVisible_); });
+    // The panel is on screen at startup, so the controls must start agreeing
+    // with it — otherwise the button reads unchecked beside a plainly visible
+    // panel, and the first press appears to do nothing.
+    syncPanelControls(layerPanelVisible_);
 
-    connect(timeline_, &TimelineDock::frameChanged, this, [this](int) { canvas_->markDirty(); });
+    // Undo/redo shortcuts used to come from the Edit menu; they are window
+    // actions now (the top bar's buttons are the visible entry points).
+    auto *undoAction = new QAction(QStringLiteral("Undo"), this);
+    undoAction->setShortcut(QKeySequence::Undo);
+    addAction(undoAction);
+    connect(undoAction, &QAction::triggered, this, &MainWindow::onUndo);
+    auto *redoAction = new QAction(QStringLiteral("Redo"), this);
+    redoAction->setShortcut(QKeySequence::Redo);
+    addAction(redoAction);
+    connect(redoAction, &QAction::triggered, this, &MainWindow::onRedo);
+
+    connect(timeline_, &TimelineDock::frameChanged, this, [this](int) {
+        canvas_->markDirty();
+        layerPanel_->refresh(); // another cell = another layer stack
+    });
     connect(timeline_, &TimelineDock::onionChanged, this, [this] { canvas_->markDirty(); });
-    connect(timeline_, &TimelineDock::keyChanged, this, [this] { timeline_->refresh(); canvas_->markDirty(); });
-    connect(timeline_, &TimelineDock::layersChanged, this, [this] { timeline_->refresh(); canvas_->markDirty(); });
+    connect(timeline_, &TimelineDock::keyChanged, this, [this] {
+        timeline_->refresh();
+        canvas_->markDirty();
+        layerPanel_->refresh();
+    });
+    connect(timeline_, &TimelineDock::layersChanged, this, [this] {
+        timeline_->refresh();
+        canvas_->markDirty();
+        layerPanel_->refresh();
+    });
+    connect(timeline_, &TimelineDock::currentLayerChanged, this, [this] { layerPanel_->refresh(); });
     connect(canvas_, &CanvasWidget::viewChanged, this, &MainWindow::onViewChanged);
-    // A tool committed an undoable edit: the canvas already rebuilt itself,
-    // the timeline still needs to pick up new keys/exposures.
-    connect(toolCtx_, &ToolContext::strokeCommitted, this, [this] { timeline_->refreshContent(); });
+    // A tool committed an undoable edit: the canvas already holds the new
+    // pixels via its incremental path (no rebuild needed), so only the panels
+    // sync here — scoped to the edited cell to avoid re-rendering the whole
+    // filmstrip synchronously on release (the click-release jank).
+    connect(toolCtx_, &ToolContext::strokeCommitted, this, [this] {
+        QString trackId;
+        int key = -1;
+        uint64_t cellLayerId = 0;
+        if (PaintLayer *l = doc_->currentLayer()) {
+            trackId = QString::fromStdString(l->stableId());
+            key = l->exposureAt(doc_->currentFrame());
+            if (CellLayer *a = doc_->currentCellLayer())
+                cellLayerId = a->id();
+        }
+        timeline_->refreshPixels(trackId, key);
+        layerPanel_->refresh();
+        if (cellLayerId)
+            layerPanel_->invalidateThumb(cellLayerId);
+        else
+            layerPanel_->invalidateThumbs();
+    });
+    // A tool recorded keyframes instead of pixels: the canvas has already
+    // rebuilt, but the timeline has to show the new keys (and, when it is open,
+    // the easing graph has to redraw them).
+    connect(toolCtx_, &ToolContext::animationRecorded, this, [this] {
+        timeline_->refreshContent();
+        timeline_->grid()->noteAnimationChanged();
+    });
+    // A camera drag writes keys mid-gesture: repaint the lane's diamonds now
+    // (cheap update, no thumbnail invalidation) instead of on next hover.
+    connect(toolCtx_, &ToolContext::cameraPreviewChanged, this, [this] {
+        timeline_->grid()->refresh();
+    });
+    // The panel changed the cell's layer stack: repaint the frame and the
+    // timeline (its thumbnails show the composited cell).
+    connect(layerPanel_, &LayerPanel::cellLayersChanged, this, [this] {
+        timeline_->refreshContent();
+        canvas_->markDirty();
+        layerPanel_->invalidateThumbs();
+    });
 
     tools_->setActiveTool(QStringLiteral("brush"));
     resize(1500, 950);
@@ -93,10 +184,28 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 MainWindow::~MainWindow() { delete doc_; }
 
 void MainWindow::onZoomPicked(double z) { canvas_->setZoom(z); }
-void MainWindow::onViewChanged() { topBar_->setZoom(canvas_->zoom()); }
+void MainWindow::onRotatePicked(double deg) { canvas_->setRotation(deg); }
+void MainWindow::onViewChanged() {
+    topBar_->setZoom(canvas_->zoom());
+    topBar_->setRotation(canvas_->rotationDeg());
+}
 
-void MainWindow::onUndo() { doc_->undo().undo(); doc_->frameCache().invalidateAll(); timeline_->refreshContent(); canvas_->markDirty(); }
-void MainWindow::onRedo() { doc_->undo().redo(); doc_->frameCache().invalidateAll(); timeline_->refreshContent(); canvas_->markDirty(); }
+void MainWindow::onUndo() {
+    doc_->undoEdit();
+    doc_->frameCache().invalidateAll();
+    timeline_->refreshContent();
+    canvas_->markDirty();
+    layerPanel_->refresh();
+    layerPanel_->invalidateThumbs();
+}
+void MainWindow::onRedo() {
+    doc_->redoEdit();
+    doc_->frameCache().invalidateAll();
+    timeline_->refreshContent();
+    canvas_->markDirty();
+    layerPanel_->refresh();
+    layerPanel_->invalidateThumbs();
+}
 
 void MainWindow::onExportPngSeq() {
     QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("PNG sequence folder"));

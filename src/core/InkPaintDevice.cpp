@@ -1,5 +1,6 @@
 #include "core/InkPaintDevice.h"
 #include "core/InkSelection.h"
+#include "pigment/InkColor.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -29,15 +30,8 @@ void PaintDevice::setPixel(int x, int y, PixelRGBA8 p, TileMemento *m) {
     t.markDirty();
 }
 
-// Read helper over a tile snapshot list (no locks; tiles are COW-stable).
-static PixelRGBA8 snapPixel(
-    const std::unordered_map<TilePos, TileShared, TilePosHash> &snap, int x, int y) {
-    TilePos p{floorDiv(x, kTileSize), floorDiv(y, kTileSize)};
-    auto it = snap.find(p);
-    if (it == snap.end()) return {};
-    const TileData &t = *it->second;
-    return t.px[modPos(y, kTileSize) * kTileSize + modPos(x, kTileSize)];
-}
+// Tile snapshot helper below: blitRect/onion resolve source tiles once per
+// destination tile (no per-pixel hash lookups).
 
 static std::unordered_map<TilePos, TileShared, TilePosHash>
 snapshotRect(const TileStore &store, const Rect &r) {
@@ -90,26 +84,100 @@ Rect PaintDevice::blitRect(const PaintDevice &src, const Rect &srcRect, int dx, 
     if (srcRect.isEmpty()) return {};
     Rect dirty{dx, dy, srcRect.w, srcRect.h};
     if (dirty.isEmpty()) return {};
+    // One destination clip's worth of pixels from the resolved 2x2 source
+    // tiles. The mapping is translation-only, so each row crosses at most one
+    // source tile boundary (`bx`); local-x runs linearly on each side of the
+    // split instead of paying an integer modulo per pixel (the old loop spent
+    // ~half its time in `%`). `by` picks the tile row once per pixel row.
+    auto put = [&](PixelRGBA8 &d, PixelRGBA8 s) {
+        if (s.a == 0) return;
+        if (op == CompositeOp::Erase) {
+            float cut = (s.a / 255.0f) * opacity;
+            d.a = static_cast<uint8_t>(d.a * (1 - cut));
+        } else if (op == CompositeOp::Multiply) {
+            d = composite::multiply(d, s, opacity);
+        } else if (op == CompositeOp::Screen) {
+            d = composite::screen(d, s, opacity);
+        } else if (s.a == 255 && opacity >= 1.0f) {
+            d = s; // opaque copy, no float math
+        } else {
+            d = compositeOver(d, s, opacity);
+        }
+    };
+    auto stampClip = [&](TileData &t, int ox, int oy, const Rect &c,
+                         const TileData *sT[2][2], int stx0, int sty0) {
+        const int bx = (stx0 + 1) * kTileSize; // first src tile boundary in x
+        const int by = (sty0 + 1) * kTileSize; // ... and y (clip is at most
+        // one tile tall, so every row falls on exactly one side of `by`)
+        for (int y = c.y; y < c.y + c.h; ++y) {
+            PixelRGBA8 *prow = &t.px[(y - oy) * kTileSize + (c.x - ox)];
+            const int sy = srcRect.y + y - dy;
+            const TileData *const *trow = sT[(sy >= by) ? 1 : 0];
+            const int ly = modPos(sy, kTileSize);
+            const int sxRow = srcRect.x + c.x - dx;
+            // Column (row-relative) where the right tile starts; bx is
+            // tile-aligned so the right segment's local-x restarts at 0, and
+            // the left segment provably stays in-bounds (length <= 64 minus
+            // its start offset within the tile).
+            int split = bx - sxRow;
+            if (split < 0) split = 0;
+            if (split > c.w) split = c.w;
+            int x = 0;
+            PixelRGBA8 *px = prow;
+            if (trow[0]) {
+                const PixelRGBA8 *base = &trow[0]->px[ly * kTileSize];
+                int lx = modPos(sxRow, kTileSize);
+                for (; x < split; ++x, ++px, ++lx) put(*px, base[lx]);
+            } else {
+                x = split;
+                px += split;
+            }
+            if (trow[1]) {
+                const PixelRGBA8 *base = &trow[1]->px[ly * kTileSize];
+                int lx = 0;
+                for (; x < c.w; ++x, ++px, ++lx) put(*px, base[lx]);
+            }
+        }
+    };
+    // Fast path: source spans of <= 2x2 tiles (dots, dirty rects, thumbnails)
+    // resolve with one lock, a stack buffer and linear probes — no
+    // unordered_map or vector allocation per layer per frame.
+    std::pair<TilePos, TileShared> small[4];
+    const int nSmall = src.store_.snapshotSmall(srcRect, small);
+    if (nSmall >= 0) {
+        auto findSmall = [&](int tx, int ty) -> const TileData * {
+            for (int i = 0; i < nSmall; ++i)
+                if (small[i].first.tx == tx && small[i].first.ty == ty)
+                    return small[i].second.get();
+            return nullptr;
+        };
+        return store_.updateTilesInRect(dirty, m, [&](TileData &t, int ox, int oy, const Rect &c) {
+            const int sx0 = srcRect.x + c.x - dx, sy0 = srcRect.y + c.y - dy;
+            const int stx0 = floorDiv(sx0, kTileSize), sty0 = floorDiv(sy0, kTileSize);
+            const int stx1 = floorDiv(sx0 + c.w - 1, kTileSize),
+                      sty1 = floorDiv(sy0 + c.h - 1, kTileSize);
+            const TileData *sT[2][2] = {{nullptr, nullptr}, {nullptr, nullptr}};
+            for (int j = sty0; j <= sty1; ++j)
+                for (int i = stx0; i <= stx1; ++i) sT[j - sty0][i - stx0] = findSmall(i, j);
+            stampClip(t, ox, oy, c, sT, stx0, sty0);
+        });
+    }
+    // Wide-span fallback: the previous unordered_map snapshot path.
     // Snapshot source tiles first (single lock, no lock-ordering hazard with
     // the destination update below).
     auto snap = snapshotRect(src.store_, srcRect);
     return store_.updateTilesInRect(dirty, m, [&](TileData &t, int ox, int oy, const Rect &c) {
-        for (int y = c.y; y < c.y + c.h; ++y) {
-            PixelRGBA8 *row = &t.px[(y - oy) * kTileSize + (c.x - ox)];
-            for (int x = c.x; x < c.x + c.w; ++x, ++row) {
-                // dst(x,y) <- src(srcRect.x + x - dx, srcRect.y + y - dy)
-                PixelRGBA8 s = snapPixel(snap, srcRect.x + x - dx, srcRect.y + y - dy);
-                if (s.a == 0) continue;
-                if (op == CompositeOp::Erase) {
-                    float cut = (s.a / 255.0f) * opacity;
-                    row->a = static_cast<uint8_t>(row->a * (1 - cut));
-                } else if (s.a == 255 && opacity >= 1.0f) {
-                    *row = s; // opaque copy, no float math
-                } else {
-                    *row = compositeOver(*row, s, opacity);
-                }
+        const int sx0 = srcRect.x + c.x - dx, sy0 = srcRect.y + c.y - dy;
+        const int stx0 = floorDiv(sx0, kTileSize), sty0 = floorDiv(sy0, kTileSize);
+        const int stx1 = floorDiv(sx0 + c.w - 1, kTileSize),
+                  sty1 = floorDiv(sy0 + c.h - 1, kTileSize);
+        const TileData *sT[2][2] = {{nullptr, nullptr}, {nullptr, nullptr}};
+        for (int j = sty0; j <= sty1; ++j)
+            for (int i = stx0; i <= stx1; ++i) {
+                auto it = snap.find(TilePos{i, j});
+                sT[j - sty0][i - stx0] = (it == snap.end()) ? nullptr : it->second.get();
             }
-        }
+        stampClip(t, ox, oy, c, sT, stx0, sty0);
     });
 }
 
@@ -142,8 +210,7 @@ Rect PaintDevice::applyDab(float cx, float cy, const float *mask, int maskSize,
     });
 }
 
-void PaintDevice::readRect(const Rect &r, uint8_t *rgbaOut) const {
-    if (r.isEmpty() || !rgbaOut) return;
+void PaintDevice::readRect(const Rect &r, uint8_t *rgbaOut) const {    if (r.isEmpty() || !rgbaOut) return;
     std::memset(rgbaOut, 0, size_t(r.w) * size_t(r.h) * 4);
     std::vector<std::pair<TilePos, TileShared>> tiles;
     store_.tilesInRect(r, tiles); // single lock
@@ -157,6 +224,33 @@ void PaintDevice::readRect(const Rect &r, uint8_t *rgbaOut) const {
             std::memcpy(dst, src, size_t(x1 - x0) * 4);
         }
     }
+}
+
+Rect PaintDevice::contentBounds() const {
+    const Rect ext = store_.extent();
+    if (ext.isEmpty()) return {};
+    std::vector<std::pair<TilePos, TileShared>> tiles;
+    store_.tilesInRect(ext, tiles); // single lock
+    int x0 = ext.x + ext.w, y0 = ext.y + ext.h, x1 = ext.x, y1 = ext.y;
+    for (auto &[pos, t] : tiles) {
+        if (!t) continue;
+        const int ox = pos.tx * kTileSize, oy = pos.ty * kTileSize;
+        const int xa = std::max(ext.x, ox), ya = std::max(ext.y, oy);
+        const int xb = std::min(ext.x + ext.w, ox + kTileSize),
+                  yb = std::min(ext.y + ext.h, oy + kTileSize);
+        for (int y = ya; y < yb; ++y) {
+            const PixelRGBA8 *row = &t->px[(y - oy) * kTileSize + (xa - ox)];
+            for (int x = xa; x < xb; ++x, ++row) {
+                if (row->a == 0) continue;
+                if (x < x0) x0 = x;
+                if (x + 1 > x1) x1 = x + 1;
+                if (y < y0) y0 = y;
+                if (y + 1 > y1) y1 = y + 1;
+            }
+        }
+    }
+    if (x1 <= x0 || y1 <= y0) return {};
+    return {x0, y0, x1 - x0, y1 - y0};
 }
 
 } // namespace ink

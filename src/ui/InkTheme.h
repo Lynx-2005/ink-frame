@@ -20,12 +20,12 @@ struct InkTheme {
     static QColor text() { return {232, 232, 234}; }
     static QColor dim() { return {150, 152, 160}; }
     static QColor faint() { return {110, 112, 120}; }
-    // --- accents ---
-    static QColor accent() { return {224, 138, 148}; }
-    static QColor playhead() { return {224, 138, 148}; }
+    // --- accents (steel blue: matches toolbox checked + focus family) ---
+    static QColor accent() { return {83, 114, 142}; }
+    static QColor playhead() { return {83, 114, 142}; }
     static QColor hover() { return {52, 53, 60}; }
     static QColor warn() { return {217, 163, 74}; }        // locked rows
-    static QColor accentMuted() { return {138, 106, 114}; } // secondary selection
+    static QColor accentMuted() { return {74, 90, 120}; } // secondary selection
     // --- tool chrome: flat, neutral, one functional accent (no candy) ---
     // Hover fill, checked block, glyph tones and the focus/accent line the
     // toolbox and tool options bar are built from.
@@ -91,6 +91,29 @@ struct InkTheme {
         c.setGreen(c.green() + (g - c.green()) * k / 100);
         c.setBlue(c.blue() + (g - c.blue()) * k / 100);
         return c;
+    }
+    // --- keyframes / adjustment layers ---
+    // Filled diamond = a key sits on this frame; the outlines are used for the
+    // hollow variants (in-between, summary), so the two are distinguishable by
+    // SHAPE and fill, never by hue alone.
+    static QColor keyFill() { return {224, 196, 128}; }      // warm, matches warn family
+    static QColor keyHold() { return {210, 176, 108}; }      // square-shouldered variant
+    static QColor keyOutline() { return {176, 156, 110}; }
+    static QColor keySelected() { return {246, 236, 206}; }
+    static QColor keyRing() { return {28, 29, 34}; }
+    static QColor adjSpine() { return {150, 122, 172}; }     // adjustment rows
+    static QColor paramRow() { return {30, 31, 37}; }
+    static QColor stopwatchOn() { return {224, 196, 128}; }
+    static QColor recordArm() { return {206, 94, 84}; }      // "Auto-key is armed"
+    static QColor linkChip() { return {118, 132, 152}; }
+    static QColor linkBroken() { return {217, 163, 74}; }
+    static QColor segLinear() { return {122, 138, 156}; }
+    static QColor segBezier() { return {150, 160, 190}; }
+    // Curve colours: the clip palette, brightened enough to read as 1px line
+    // work on the graph editor's dark field.
+    static QColor curveColor(int i) {
+        QColor c = clipColor(i);
+        return c.lighter(125);
     }
     static QString styleSheet();
 };

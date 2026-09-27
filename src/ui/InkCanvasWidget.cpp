@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <shared_mutex>
 #include <QPainterPath>
 #include <QWheelEvent>
 #include <cmath>
@@ -71,7 +72,13 @@ void CanvasWidget::updateCursor() {
         return;
     }
     Tool *tool = tools_ ? tools_->activeTool() : nullptr;
-    setCursor(tool ? tool->cursor() : QCursor(Qt::ArrowCursor));
+    if (!tool) {
+        setCursor(QCursor(Qt::ArrowCursor));
+        return;
+    }
+    // Hover position lets handle-based tools show the right resize/rotate cursor.
+    setCursor(hover_ ? tool->cursorAt({hoverPos_.x(), hoverPos_.y()}, view_.zoom())
+                     : tool->cursor());
 }
 
 ToolEvent CanvasWidget::makeEvent(const QPointF &docPos, float pressure, double timeSec,
@@ -80,6 +87,7 @@ ToolEvent CanvasWidget::makeEvent(const QPointF &docPos, float pressure, double 
     e.docPos = {docPos.x(), docPos.y()};
     e.pressure = pressure;
     e.timeSec = timeSec;
+    e.zoom = view_.zoom();
     e.mods = mods;
     e.tablet = tablet;
     return e;
@@ -108,6 +116,29 @@ void CanvasWidget::setZoom(double z) {
     update();
 }
 
+void CanvasWidget::setActualSize() {
+    syncViewSizes();
+    const double cur = view_.zoom();
+    if (cur > 0)
+        view_.zoomAtCenter(1.0 / cur);
+    emit viewChanged();
+    update();
+}
+
+void CanvasWidget::setRotation(double deg) {
+    syncViewSizes();
+    view_.setRotation(deg);
+    emit viewChanged();
+    update();
+}
+
+void CanvasWidget::rotateBy(double deg) {
+    syncViewSizes();
+    view_.setRotation(view_.rotationDeg() + deg);
+    emit viewChanged();
+    update();
+}
+
 void CanvasWidget::initializeGL() {
     initializeOpenGLFunctions();
 }
@@ -131,6 +162,19 @@ QPointF CanvasWidget::toCanvas(const QPointF &w) const {
     return {d.x, d.y};
 }
 
+void CanvasWidget::ensureChecker(int w, int h) {
+    if (checker_.width() == w && checker_.height() == h)
+        return;
+    checker_ = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
+    QPainter c(&checker_);
+    const int cs = 24;
+    const QColor a(200, 200, 200), b(150, 150, 150);
+    for (int y = 0; y < h; y += cs)
+        for (int x = 0; x < w; x += cs)
+            c.fillRect(QRect(x, y, std::min(cs, w - x), std::min(cs, h - y)),
+                       ((x / cs + y / cs) % 2) ? a : b);
+}
+
 QTransform CanvasWidget::qtransform() const {
     const Affine2D &t = view_.docToWidget();
     return {t.a, t.b, t.c, t.d, t.tx, t.ty};
@@ -141,11 +185,21 @@ std::shared_ptr<PaintDevice> CanvasWidget::frameImage(int frame, bool live) {
         if (auto cached = doc_->frameCache().get(frame))
             return cached;
     }
-    // Synchronous fallback (also the live path while a tool is editing) +
-    // warm the cache for scrub/playback.
+    // Synchronous fallback (also the live path while a tool is editing) —
+    // but the cache is warmed ONLY when not editing. While a tool is editing
+    // (transform record mode, a recorded drag), every mouse move lands here:
+    // queueing a 12-frame prefetch per move would re-render the whole
+    // animated frame a dozen times over on the workers (each an adjustment
+    // lift + full-canvas bicubic resample), starving the UI thread. That
+    // contention — not the projection itself — is what made the app feel
+    // laggy with adjustment layers. Warm the cache only for idle scrubbing.
     auto out = std::make_shared<PaintDevice>();
-    doc_->image().project(frame, *out);
-    doc_->frameCache().requestRange(frame);
+    {
+        std::shared_lock<std::shared_mutex> lock(doc_->image().treeMutex());
+        doc_->image().project(frame, *out);
+    }
+    if (!live)
+        doc_->frameCache().requestRange(frame);
     return out;
 }
 
@@ -186,11 +240,13 @@ void CanvasWidget::uploadRect(const Rect &r) {
     Rect c = intersectRect(r, canvas);
     if (c.isEmpty()) return;
     // Patch only the dirty rows into the persistent image. QImage is
-    // contiguous RGBA8888, so each row patch is one memcpy run.
+    // contiguous RGBA8888, so each row patch is one memcpy run. The readback
+    // buffer is reused across calls (grow-only) instead of malloc per dab.
     const int bpl = composedImage_.bytesPerLine();
-    std::vector<uint8_t> buf(size_t(c.w) * size_t(c.h) * 4);
-    composedDev_.readRect(c, buf.data());
-    const uint8_t *src = buf.data();
+    const size_t need = size_t(c.w) * size_t(c.h) * 4;
+    if (uploadBuf_.size() < need) uploadBuf_.resize(need);
+    composedDev_.readRect(c, uploadBuf_.data());
+    const uint8_t *src = uploadBuf_.data();
     for (int y = 0; y < c.h; ++y, src += size_t(c.w) * 4)
         std::memcpy(composedImage_.bits() + size_t(c.y + y) * bpl + size_t(c.x) * 4, src,
                     size_t(c.w) * 4);
@@ -224,7 +280,11 @@ void CanvasWidget::incrementalUpdate(const Rect &dirty) {
     // untouched layers/tiles).
     Rect r = intersectRect(dirty, Rect{0, 0, doc_->image().width(), doc_->image().height()});
     if (r.isEmpty()) return;
-    Rect refreshed = doc_->image().projectRect(doc_->currentFrame(), r, scratchDev_);
+    Rect refreshed;
+    {
+        std::shared_lock<std::shared_mutex> lock(doc_->image().treeMutex());
+        refreshed = doc_->image().projectRect(doc_->currentFrame(), r, scratchDev_);
+    }
     if (refreshed.isEmpty()) return;
     composedDev_.store().clearRect(refreshed);
     applyGhosts(composedDev_, &refreshed);
@@ -272,13 +332,11 @@ void CanvasWidget::paintGL() {
     p.setRenderHint(QPainter::SmoothPixmapTransform, view_.zoom() < 1.0);
     p.setTransform(qtransform());
 
-    // checkerboard over the canvas bounds
-    const int cs = 24;
-    QColor a(200, 200, 200), b(150, 150, 150);
-    for (int y = 0; y < H; y += cs)
-        for (int x = 0; x < W; x += cs)
-            p.fillRect(QRect(x, y, std::min(cs, W - x), std::min(cs, H - y)),
-                       ((x / cs + y / cs) % 2) ? a : b);
+    // checkerboard over the canvas bounds — pre-rasterized ONCE into a cached
+    // image (3600 fillRect calls per paint would otherwise eat the whole frame
+    // budget on every mouse move; one texture draw replaces them).
+    ensureChecker(W, H);
+    p.drawImage(0, 0, checker_);
     // canvas edge
     p.setPen(QPen(QColor(0, 0, 0, 160), 0));
     p.drawRect(QRect(0, 0, W, H));
@@ -353,7 +411,8 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent *e) {
     }
     if (toolPressed_ && tools_)
         tools_->move(makeEvent(hoverPos_, 1.0f, double(e->timestamp()) / 1000.0, e->modifiers(), false));
-    update(); // ring / preview follow the pointer
+    updateCursor(); // handle-based tools swap the cursor as the pointer moves
+    update();       // ring / preview follow the pointer
 }
 
 void CanvasWidget::mouseReleaseEvent(QMouseEvent *e) {
@@ -375,6 +434,13 @@ void CanvasWidget::leaveEvent(QEvent *e) {
     hover_ = false;
     QOpenGLWidget::leaveEvent(e);
     update();
+}
+
+// Double-click lands what the active tool is previewing (transform Apply) —
+// the touch-friendly twin of Enter, since touch has no keyboard.
+void CanvasWidget::mouseDoubleClickEvent(QMouseEvent *e) {
+    if (e->button() == Qt::LeftButton && tools_ && tools_->commit())
+        update();
 }
 
 void CanvasWidget::wheelEvent(QWheelEvent *e) {
@@ -430,6 +496,36 @@ void CanvasWidget::keyPressEvent(QKeyEvent *e) {
         toolPressed_ = false;
         update();
         return;
+    }
+    // Enter/Return applies what the active tool is holding open (transform,
+    // warp, liquify) — the keyboard twin of the options bar's Apply button.
+    if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && tools_) {
+        if (tools_->commit()) {
+            update();
+            return;
+        }
+    }
+    // Canvas view keys, Krita-style: 4/6 rotate, 5 resets rotation, 1/3 zoom
+    // steps, 2 is actual size. Bare digits only, so tool shortcuts stay clean.
+    if (!(e->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+        switch (e->key()) {
+        case Qt::Key_4: rotateBy(-15.0); return;
+        case Qt::Key_6: rotateBy(15.0); return;
+        case Qt::Key_5: resetRotation(); return;
+        case Qt::Key_2: setActualSize(); return;
+        case Qt::Key_1:
+            view_.zoomAtCenter(1.15);
+            emit viewChanged();
+            update();
+            return;
+        case Qt::Key_3:
+            view_.zoomAtCenter(1.0 / 1.15);
+            emit viewChanged();
+            update();
+            return;
+        default:
+            break;
+        }
     }
     // Arrow keys nudge the active tool (the move tool shifts its content).
     {

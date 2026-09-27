@@ -23,7 +23,7 @@ TileShared TileStore::detachLocked(const TilePos &p, TileMemento *m) {
     if (it == tiles_.end()) {
         auto fresh = std::make_shared<TileData>();
         tiles_[p] = fresh;
-        if (m) m->entries.push_back({p, nullptr});
+        if (m) m->record(p, nullptr);
         return fresh;
     }
     if (it->second.use_count() > 1) {
@@ -31,21 +31,12 @@ TileShared TileStore::detachLocked(const TilePos &p, TileMemento *m) {
         TileShared old = it->second;
         auto copy = std::make_shared<TileData>(*old);
         it->second = copy;
-        if (m) {
-            // Record only first touch per stroke: check duplicates
-            bool seen = false;
-            for (auto &e : m->entries) if (e.pos == p) { seen = true; break; }
-            if (!seen) m->entries.push_back({p, old});
-        }
+        if (m) m->record(p, old); // first touch per stroke only
         return copy;
     }
-    if (m) {
-        bool seen = false;
-        for (auto &e : m->entries) if (e.pos == p) { seen = true; break; }
-        if (!seen) {
-            // Exclusive but undoable: snapshot a copy of pre-stroke data
-            m->entries.push_back({p, std::make_shared<TileData>(*it->second)});
-        }
+    if (m && !m->noted(p)) {
+        // Exclusive but undoable: snapshot a copy of pre-stroke data
+        m->record(p, std::make_shared<TileData>(*it->second));
     }
     return it->second;
 }
@@ -126,6 +117,22 @@ void TileStore::tilesInRect(const Rect &r, std::vector<std::pair<TilePos, TileSh
             auto it = tiles_.find(TilePos{tx, ty});
             if (it != tiles_.end()) out.emplace_back(TilePos{tx,ty}, it->second);
         }
+}
+
+int TileStore::snapshotSmall(const Rect &r,
+                             std::pair<TilePos, TileShared> (&out)[4]) const {
+    if (r.isEmpty()) return 0;
+    const int tx0 = floorDiv(r.x, kTileSize), ty0 = floorDiv(r.y, kTileSize);
+    const int tx1 = floorDiv(r.x + r.w - 1, kTileSize), ty1 = floorDiv(r.y + r.h - 1, kTileSize);
+    if (tx1 - tx0 > 1 || ty1 - ty0 > 1) return -1; // wide span: use tilesInRect
+    std::lock_guard<std::mutex> lk(mutex_);
+    int n = 0;
+    for (int ty = ty0; ty <= ty1; ++ty)
+        for (int tx = tx0; tx <= tx1; ++tx) {
+            auto it = tiles_.find(TilePos{tx, ty});
+            if (it != tiles_.end()) out[n++] = {TilePos{tx, ty}, it->second};
+        }
+    return n;
 }
 
 } // namespace ink

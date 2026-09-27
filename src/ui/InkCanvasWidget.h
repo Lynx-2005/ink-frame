@@ -9,8 +9,10 @@
 #include <QOpenGLWidget>
 #include <QTabletEvent>
 #include <QTimer>
+#include <QDateTime>
 #include <map>
 #include <memory>
+#include <vector>
 #include "core/InkPaintDevice.h"
 #include "core/InkTileStore.h"
 #include "core/InkViewConverter.h"
@@ -33,11 +35,21 @@ public:
     // ToolHost: how tools request redraws without knowing this class.
     void repaint() override { update(); }
     void rebuild() override { markDirty(); }
+    double nowSec() const override {
+        return double(QDateTime::currentMSecsSinceEpoch()) / 1000.0;
+    }
 
     void fitToView();
     void markDirty(); // projection/ghosts must be rebuilt
     double zoom() const { return view_.zoom(); }
     void setZoom(double z); // absolute zoom (top-bar dropdown)
+    // View rotation (canvas only, never the pixels): 4/6 nudge it, 5 clears it,
+    // the top bar picks absolute angles.
+    double rotationDeg() const { return view_.rotationDeg(); }
+    void setRotation(double deg);
+    void rotateBy(double deg);
+    void resetRotation() { setRotation(0.0); }
+    void setActualSize(); // zoom to 100%
 
 signals:
     void viewChanged();
@@ -50,6 +62,7 @@ protected:
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
+    void mouseDoubleClickEvent(QMouseEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;
     void tabletEvent(QTabletEvent *e) override;
     void keyPressEvent(QKeyEvent *e) override;
@@ -78,6 +91,9 @@ private:
     std::shared_ptr<PaintDevice> ghostImage(int frame);
     void applyGhosts(PaintDevice &composed, const Rect *clip);
     void uploadRect(const Rect &r);
+    // The canvas checkerboard, rasterized once per document size instead of
+    // 3600 fillRect calls per paintGL (which ran on every mouse move).
+    void ensureChecker(int w, int h);
 
     Document *doc_;
     ToolManager *tools_{nullptr};
@@ -103,6 +119,9 @@ private:
     // tiles can be rebuilt ghosts-first with the active frame over them.
     PaintDevice scratchDev_;
     QImage composedImage_; // full canvas size, patched incrementally
+    QImage checker_;       // cached transparency checkerboard
+    // Reused readback buffer for uploadRect (was: malloc+free per dab).
+    std::vector<uint8_t> uploadBuf_;
     // Ghost-frame projections, valid for the current playhead position only.
     std::map<int, std::shared_ptr<PaintDevice>> ghostDevs_;
 };

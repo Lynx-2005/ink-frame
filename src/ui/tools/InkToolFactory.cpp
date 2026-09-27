@@ -1,10 +1,12 @@
 #include "ui/tools/InkToolFactory.h"
+#include "ui/tools/InkCameraTool.h"
 #include "ui/tools/InkColorPickerTool.h"
 #include "ui/tools/InkFillTool.h"
 #include "ui/tools/InkMoveTool.h"
 #include "ui/tools/InkPaintTool.h"
 #include "ui/tools/InkSelectionTools.h"
 #include "ui/tools/InkShapeTools.h"
+#include "ui/tools/InkTransformTool.h"
 #include <algorithm>
 
 namespace ink {
@@ -152,6 +154,34 @@ void registerBuiltinTools() {
     move.priority = 0;
     move.create = [] { return new MoveTool(); };
     reg.add(move);
+
+    // Transform tool: ONE factory entry. Warp/Liquify/Perspective are MODEs of
+    // this tool, chosen from its options bar.
+    {
+        ToolFactory tf;
+        tf.id = QStringLiteral("transform");
+        tf.name = QStringLiteral("Transform");
+        tf.section = ToolSections::transform();
+        tf.icon = IconId::Transform;
+        tf.priority = 1;
+        tf.shortcut = QKeySequence(Qt::Key_T);
+        const QString fid = tf.id;
+        tf.create = [fid] { return new TransformTool(TransformTool::Mode::Free, fid); };
+        reg.add(tf);
+    }
+
+    // Camera tool: Clip-Studio-style 2D camera (pan/zoom/rotate the shot).
+    {
+        ToolFactory cam;
+        cam.id = QStringLiteral("camera");
+        cam.name = QStringLiteral("Camera");
+        cam.section = ToolSections::transform();
+        cam.icon = IconId::Camera;
+        cam.shortcut = QKeySequence(Qt::Key_C);
+        cam.priority = 2;
+        cam.create = [] { return new CameraTool(); };
+        reg.add(cam);
+    }
 }
 
 } // namespace ink

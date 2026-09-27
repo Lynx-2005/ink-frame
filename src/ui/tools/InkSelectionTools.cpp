@@ -83,6 +83,20 @@ void SelectionToolBase::endPrimary(const ToolEvent &e) {
         ctx_->requestRepaint();
         return;
     }
+    // Remember whose ink this mask clips, so the compositor can keep the ants
+    // on the stroke when a keyframed transform moves it (the target id is the
+    // paint layer the selection was taken on).
+    if (PaintLayer *pl = ctx_->doc()->currentLayer())
+        sel.setTargetId(pl->id());
+    // ...and re-derive the ants' display map BEFORE mapping the polygon into the
+    // mask. applyPolygon() back-maps a document-space path into device space
+    // only while that map is current, and the mask's map is dropped by
+    // reset() (Select All, Deselect, a fresh document, the first selection of a
+    // session). Syncing only afterwards - as this path used to - stored a
+    // selection drawn on a keyframed layer in DISPLAY space, so the mask stopped
+    // matching the ink it circled. The target id above is what the sync reads,
+    // so this order is load-bearing.
+    ctx_->doc()->syncSelectionTransform();
     sel.applyPolygon(poly, effectiveAction(e.mods), antialias_);
     path_.clear();
     ctx_->notifySelectionChanged();
@@ -204,81 +218,88 @@ QPainterPath LassoSelectTool::previewPath() const {
 
 std::vector<Vec2> LassoSelectTool::polygon() const { return path_; }
 
-// Smart mode: sample the drawing once per stroke, then let the outline cling
-// to nearby edges instead of following the raw hand path.
-void LassoSelectTool::beginPrimary(const ToolEvent &e) {
-    if (!ctx_)
-        return;
-    if (smart_) {
-        PaintDevice projection;
-        ctx_->doc()->image().project(ctx_->doc()->currentFrame(), projection);
-        field_.build(projection, documentRect());
-    } else {
-        field_ = MagneticField{};
-    }
-    SelectionToolBase::beginPrimary(e);
-    if (smart_ && field_.valid() && !path_.empty()) {
-        Vec2 snapped;
-        if (field_.snap(path_.back().x, path_.back().y, snapRadius_, snapped))
-            path_.back() = snapped;
-    }
-}
-
-void LassoSelectTool::continuePrimary(const ToolEvent &e) {
+// Whole-stroke mode: the freehand path is collected exactly like the plain
+// lasso (no magnetic edge-clinging); on release, any ink component the loop
+// touches is expanded to the complete stroke on the current layer.
+void LassoSelectTool::endPrimary(const ToolEvent &e) {
     if (!dragging_)
         return;
-    if (!smart_ || !field_.valid()) {
-        SelectionToolBase::continuePrimary(e);
+    if (!wholeStroke_ || !ctx_) {
+        SelectionToolBase::endPrimary(e);
         return;
     }
-    Vec2 target = e.docPos;
-    Vec2 snapped;
-    if (field_.snap(target.x, target.y, snapRadius_, snapped))
-        target = snapped;
-    appendSnapped(target);
+    dragging_ = false;
+    current_ = e.docPos;
+    Selection &sel = ctx_->selection();
+    const std::vector<Vec2> poly = polygon();
+    if (poly.size() < 3) {
+        if (effectiveAction(e.mods) == SelectionAction::Replace && !sel.isEmpty()) {
+            sel.clear();
+            ctx_->notifySelectionChanged();
+            ctx_->setStatus(QStringLiteral("Deselected"));
+        }
+        path_.clear();
+        ctx_->requestRepaint();
+        return;
+    }
+    // Scan the WHOLE cell, not just its active paint layer: ink drawn on any
+    // visible layer of the current cell is grabbable. nullptr = nothing
+    // exposed at the playhead; an empty extent = a cell with no visible ink.
+    // Both degrade to the plain polygon, but say so instead of failing silently.
+    const PaintDevice *device = ctx_->doc() ? ctx_->doc()->compositeOfCurrentCell() : nullptr;
+    const bool hasInk = device && !device->extent().isEmpty();
+    // Tag the mask with the working track (the adjustment's target when the
+    // adjustment is selected), so keyframed ink keeps the ants attached.
+    if (PaintLayer *pl = ctx_->doc()->currentLayer())
+        sel.setTargetId(pl->id());
+    else if (AdjustmentLayer *al = ctx_->doc()->currentAdjustment())
+        sel.setTargetId(al->targetId());
+    // Re-derive the ants' display map BEFORE the polygon is mapped into the
+    // mask. applyPolygon() back-maps a document-space path into device space
+    // only while that map is current, and the mask's map is dropped by
+    // reset() (Select All, Deselect, a fresh document, the first selection of a
+    // session). Syncing only afterwards - as this path used to - meant a
+    // selection drawn on a keyframed layer after any of those was stored in
+    // DISPLAY space: the mask stopped matching the ink it circled, which is the
+    // "ants on their own track" report. The target id above is what the sync
+    // reads, so the order here is load-bearing.
+    if (ctx_->doc())
+        ctx_->doc()->syncSelectionTransform();
+    if (hasInk)
+        sel.applyStrokePolygon(poly, effectiveAction(e.mods), antialias_, *device, gapRadius_);
+    else
+        sel.applyPolygon(poly, effectiveAction(e.mods), antialias_);
+    path_.clear();
+    ctx_->notifySelectionChanged();
     ctx_->requestRepaint();
-}
-
-void LassoSelectTool::appendSnapped(const Vec2 &to) {
-    if (path_.empty()) {
-        path_.push_back(to);
-        return;
-    }
-    const Vec2 from = path_.back();
-    const double dx = to.x - from.x, dy = to.y - from.y;
-    const double len = std::hypot(dx, dy);
-    if (len < 1.0)
-        return;
-    // Sub-sample the step so each piece can be pulled onto the edge; the
-    // result hugs the drawing instead of cutting across it.
-    const int steps = std::max(1, int(len / 3.0));
-    for (int i = 1; i <= steps; ++i) {
-        Vec2 p{from.x + dx * double(i) / double(steps), from.y + dy * double(i) / double(steps)};
-        Vec2 fine;
-        if (field_.snap(p.x, p.y, snapRadius_ * 0.5, fine))
-            p = fine;
-        if (std::hypot(p.x - path_.back().x, p.y - path_.back().y) >= 1.0)
-            path_.push_back(p);
-    }
+    const Rect b = sel.bounds();
+    if (!hasInk)
+        ctx_->setStatus(QStringLiteral("Nothing to select on this frame"));
+    else
+        ctx_->setStatus(sel.isEmpty()
+                            ? QStringLiteral("Selection cleared")
+                            : QStringLiteral("Selection %1 × %2 px").arg(b.w).arg(b.h));
 }
 
 void LassoSelectTool::addExtraOptions(QHBoxLayout *row, QWidget *page) {
     row->addWidget(InkOptions::separator(page));
-    auto *smart = InkOptions::toggle(QStringLiteral("Smart snap"), smart_, page);
-    smart->setToolTip(QStringLiteral("Snap the outline to nearby drawn edges"));
-    connect(smart, &QToolButton::toggled, page, [this](bool on) {
-        smart_ = on;
+    auto *whole = InkOptions::toggle(QStringLiteral("Whole stroke"), wholeStroke_, page);
+    whole->setToolTip(QStringLiteral("Select complete strokes touched by the lasso "
+                                     "(one pen-down to pen-up = one stroke)"));
+    connect(whole, &QToolButton::toggled, page, [this](bool on) {
+        wholeStroke_ = on;
         if (ctx_)
             ctx_->setStatus(statusHint());
     });
-    row->addWidget(smart);
+    row->addWidget(whole);
 
-    auto *radius = InkOptions::slider(2, 28, snapRadius_, page, 70);
-    auto *radiusValue = InkOptions::value(QStringLiteral("%1 px").arg(snapRadius_), page, 40);
-    InkOptions::addField(row, QStringLiteral("SNAP"), radius);
+    auto *radius = InkOptions::slider(0, 28, gapRadius_, page, 70);
+    auto *radiusValue = InkOptions::value(QStringLiteral("%1 px").arg(gapRadius_), page, 40);
+    radius->setToolTip(QStringLiteral("How close the lasso must pass to count as touching a stroke"));
+    InkOptions::addField(row, QStringLiteral("GAP"), radius);
     row->addWidget(radiusValue);
     connect(radius, &QSlider::valueChanged, page, [this, radiusValue](int v) {
-        snapRadius_ = v;
+        gapRadius_ = v;
         radiusValue->setText(QStringLiteral("%1 px").arg(v));
     });
 }

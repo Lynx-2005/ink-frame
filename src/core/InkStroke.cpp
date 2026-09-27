@@ -8,7 +8,14 @@ const std::string UndoStack::kEmpty{};
 void UndoStack::push(StrokeCommand cmd) {
     undo_.push_back(std::move(cmd));
     redo_.clear();
-    if (undo_.size() > limit_) undo_.erase(undo_.begin());
+    if (undo_.size() > limit_) undo_.pop_front();
+}
+void UndoStack::pushAction(std::string name, std::function<void()> redo, std::function<void()> undo) {
+    StrokeCommand cmd;
+    cmd.name = std::move(name);
+    cmd.redoFn = std::move(redo);
+    cmd.undoFnExtra = std::move(undo);
+    push(std::move(cmd));
 }
 const std::string &UndoStack::undoName() const { return undo_.empty() ? kEmpty : undo_.back().name; }
 const std::string &UndoStack::redoName() const { return redo_.empty() ? kEmpty : redo_.back().name; }

@@ -63,12 +63,12 @@ void ShapeToolBase::endPrimary(const ToolEvent &e) {
     current_ = e.docPos;
     PaintDevice *device = ctx_->editableDevice();
     if (!device) {
-        ctx_->setStatus(QStringLiteral("Layer is locked or not paintable"));
+        ctx_->setStatus(ctx_->blockedHint());
         return;
     }
     TileMemento memento;
     Rect dirty;
-    commit(*ctx_, *device, start_, current_, memento, dirty);
+    rasterize(*ctx_, *device, start_, current_, memento, dirty);
     if (!memento.empty()) {
         ctx_->markDirty(dirty);
         ctx_->pushStrokeCommand(QStringLiteral("Shape"), device, std::move(memento));
@@ -143,7 +143,7 @@ QPainterPath LineTool::previewPath(const Vec2 &a, const Vec2 &b) const {
     return path;
 }
 
-void LineTool::commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
+void LineTool::rasterize(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
                       TileMemento &memento, Rect &dirty) const {
     dirty = strokePolyline(dev, {{a.x, a.y}, {b.x, b.y}}, shapeTip(ctx), shapeColor(ctx), 1.0f,
                            CompositeOp::Normal, &memento, ctx.selectionClip());
@@ -156,7 +156,7 @@ QPainterPath RectangleTool::previewPath(const Vec2 &a, const Vec2 &b) const {
     return path;
 }
 
-void RectangleTool::commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
+void RectangleTool::rasterize(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
                            TileMemento &memento, Rect &dirty) const {
     const QRectF r = boundsOf(a, b);
     if (ctx.shapeFill()) {
@@ -179,7 +179,7 @@ QPainterPath EllipseTool::previewPath(const Vec2 &a, const Vec2 &b) const {
     return path;
 }
 
-void EllipseTool::commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
+void EllipseTool::rasterize(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
                          TileMemento &memento, Rect &dirty) const {
     const QRectF r = boundsOf(a, b);
     const double cx = (r.left() + r.right()) * 0.5;

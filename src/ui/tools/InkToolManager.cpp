@@ -9,7 +9,10 @@
 
 namespace ink {
 
+ToolManager *ToolManager::activeManager_{nullptr};
+
 ToolManager::ToolManager(ToolContext *ctx, QObject *parent) : QObject(parent), ctx_(ctx) {
+    activeManager_ = this; // one app-wide manager (the last one built wins)
     registerBuiltinTools();
     buildActions();
     // Tools report feedback through the context ("Sampled #RRGGBB", size
@@ -26,6 +29,7 @@ void ToolManager::buildActions() {
         auto *a = new QAction(f.name, this);
         a->setCheckable(true);
         a->setIcon(InkIcons::get(f.icon, 18, false));
+        a->setData(f.id);
         if (!f.shortcut.isEmpty()) {
             a->setShortcut(f.shortcut);
             a->setToolTip(QStringLiteral("%1 (%2)").arg(f.name, f.shortcut.toString()));
@@ -148,6 +152,11 @@ void ToolManager::cancel() {
 bool ToolManager::nudge(int dx, int dy, Qt::KeyboardModifiers mods) {
     Tool *t = activeTool();
     return t && t->nudge(dx, dy, mods);
+}
+
+bool ToolManager::commit() {
+    Tool *t = activeTool();
+    return t && t->commit();
 }
 
 void ToolManager::flipSelection(bool horizontal) {

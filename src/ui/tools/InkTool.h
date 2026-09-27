@@ -22,6 +22,9 @@ struct ToolEvent {
     float tiltX{0.0f};
     float tiltY{0.0f};
     double timeSec{0.0};
+    // Current canvas zoom: tools size screen-space chrome (handles, cursors)
+    // in document units as k/zoom, so hit-testing and painting always agree.
+    double zoom{1.0};
     Qt::KeyboardModifiers mods{};
     bool tablet{false};
 };
@@ -31,6 +34,10 @@ struct ToolHost {
     virtual ~ToolHost() = default;
     virtual void repaint() = 0;  // overlay-only redraw
     virtual void rebuild() = 0;  // full projection rebuild
+    // Wall-clock seconds; tools use it to throttle full-canvas rebuilds to a
+    // fixed rate instead of one per mouse-move. Default 0 keeps "always rebuild"
+    // for hosts that don't care.
+    virtual double nowSec() const { return 0.0; }
 };
 
 // Overlay draw info; the painter is already in document space.
@@ -63,6 +70,8 @@ public:
         Q_UNUSED(mods);
         return false;
     }
+    // Enter/Apply: commit whatever the tool is holding open. True when consumed.
+    virtual bool commit() { return false; }
     // Mirror the current region (selection contents, else the layer).
     virtual void flipSelection(bool horizontal) { Q_UNUSED(horizontal); }
 
@@ -71,6 +80,13 @@ public:
     virtual bool isEditing() const { return false; }
 
     virtual QCursor cursor() const { return QCursor(Qt::ArrowCursor); }
+    // Cursor for a hover position: lets a tool show handle-specific cursors.
+    // The zoom comes along because handle hit radii are screen-space.
+    virtual QCursor cursorAt(const Vec2 &docPos, double zoom) const {
+        Q_UNUSED(docPos);
+        Q_UNUSED(zoom);
+        return cursor();
+    }
     virtual void paintOverlay(QPainter &, const OverlayInfo &) const {}
     virtual QWidget *createOptionsWidget(QWidget *parent) {
         Q_UNUSED(parent);

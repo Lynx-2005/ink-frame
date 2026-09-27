@@ -33,6 +33,8 @@ public:
     void reset(float x, float y, float sizeMul = 1.0f, float opacityMul = 1.0f);
     // Returns dabs to stamp for this point (0..N)
     std::vector<Dab> push(const TabletState &s, float sizeMul, float opacityMul);
+    // Append-only variant: reuses the caller's vector (no per-event alloc).
+    void pushTo(const TabletState &s, float sizeMul, float opacityMul, std::vector<Dab> &out);
 private:
     float spacingPx_{3.0f};
     float lastX_{0}, lastY_{0};
@@ -81,6 +83,13 @@ private:
     Stabilizer stab_;
     CurveFlattener flat_;
     bool stroking_{false};
+    // Per-event scratch (reused, never reallocated in steady state) plus a
+    // cache of pressure-resampled tip masks keyed by odd dab size: the old
+    // path re-ran an O(ns^2) bilinear resample AND a heap alloc per dab
+    // whenever pressure moved off the cached size.
+    std::vector<Dab> dabScratch_;
+    std::vector<PathPoint> pathScratch_;
+    std::unordered_map<int, std::vector<float>> maskCache_;
 };
 
 class EraserOp : public PixelBrushOp {

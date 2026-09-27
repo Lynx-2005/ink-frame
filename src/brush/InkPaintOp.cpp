@@ -14,15 +14,21 @@ void StrokeInterpolator::reset(float x, float y, float sizeMul, float opacityMul
 
 std::vector<Dab> StrokeInterpolator::push(const TabletState &s, float sizeMul, float opacityMul) {
     std::vector<Dab> out;
+    pushTo(s, sizeMul, opacityMul, out);
+    return out;
+}
+
+void StrokeInterpolator::pushTo(const TabletState &s, float sizeMul, float opacityMul,
+                                std::vector<Dab> &out) {
     if (!started_) {
         reset(s.x, s.y, sizeMul, opacityMul);
         out.push_back({s.x, s.y, sizeMul, opacityMul});
-        return out;
+        return;
     }
     float dx = s.x - lastX_, dy = s.y - lastY_;
     float dist = std::sqrt(dx * dx + dy * dy);
     float spacing = std::max(1.0f, spacingPx_);
-    if (dist < 1e-6f) return out;
+    if (dist < 1e-6f) return;
     float nx = dx / dist, ny = dy / dist;
     // Emit at spacing boundaries measured from the last dab (leftover_ is
     // the distance already travelled toward the next one). Multipliers lerp
@@ -40,7 +46,6 @@ std::vector<Dab> StrokeInterpolator::push(const TabletState &s, float sizeMul, f
     lastY_ = s.y;
     lastSizeMul_ = sizeMul;
     lastOpMul_ = opacityMul;
-    return out;
 }
 
 PixelBrushOp::PixelBrushOp(AutoBrushTip tip, BrushDynamics dyn)
@@ -49,6 +54,7 @@ PixelBrushOp::PixelBrushOp(AutoBrushTip tip, BrushDynamics dyn)
 void PixelBrushOp::setTip(AutoBrushTip t) {
     tip_ = std::move(t);
     interp_ = StrokeInterpolator(tip_.spacingPx());
+    maskCache_.clear(); // resampled masks belong to the previous tip shape
 }
 
 void PixelBrushOp::beginStroke(PaintOpContext ctx) {
@@ -98,7 +104,16 @@ void PixelBrushOp::stampDab(const Dab &d) {
         dabRect = ctx_.device->applyDab(d.x, d.y, base.data(), bs, ctx_.color, effOpacity,
                                         ctx_.composite, ctx_.memento, ctx_.selection);
     } else {
-        auto m = resampleMask(base, bs, ns);
+        // Quantized dab cache (the header's long-promised one): a pressure
+        // run reuses each size's resample instead of re-running O(ns^2)
+        // bilinear + a heap alloc per dab. Capped so exotic size sweeps
+        // cannot grow it without bound.
+        auto it = maskCache_.find(ns);
+        if (it == maskCache_.end()) {
+            if (maskCache_.size() >= 32) maskCache_.clear();
+            it = maskCache_.emplace(ns, resampleMask(base, bs, ns)).first;
+        }
+        const std::vector<float> &m = it->second;
         dabRect = ctx_.device->applyDab(d.x, d.y, m.data(), ns, ctx_.color, effOpacity,
                                         ctx_.composite, ctx_.memento, ctx_.selection);
     }
@@ -122,10 +137,14 @@ void PixelBrushOp::addEvent(const StrokeEvent &e) {
         return;
     }
     const RawSample s = stab_.push(raw);
-    for (const PathPoint &pt : flat_.push({s.x, s.y, sm, om})) {
+    pathScratch_.clear();
+    flat_.pushTo({s.x, s.y, sm, om}, pathScratch_);
+    for (const PathPoint &pt : pathScratch_) {
         ps.x = float(pt.x);
         ps.y = float(pt.y);
-        for (const Dab &d : interp_.push(ps, pt.sizeMul, pt.opacityMul)) stampDab(d);
+        dabScratch_.clear();
+        interp_.pushTo(ps, pt.sizeMul, pt.opacityMul, dabScratch_);
+        for (const Dab &d : dabScratch_) stampDab(d);
     }
 }
 
@@ -133,10 +152,14 @@ void PixelBrushOp::endStroke() {
     if (!stroking_) return;
     if (ctx_.device) {
         TabletState ps;
-        for (const PathPoint &pt : flat_.finish()) {
+        pathScratch_.clear();
+        flat_.finishTo(pathScratch_);
+        for (const PathPoint &pt : pathScratch_) {
             ps.x = float(pt.x);
             ps.y = float(pt.y);
-            for (const Dab &d : interp_.push(ps, pt.sizeMul, pt.opacityMul)) stampDab(d);
+            dabScratch_.clear();
+            interp_.pushTo(ps, pt.sizeMul, pt.opacityMul, dabScratch_);
+            for (const Dab &d : dabScratch_) stampDab(d);
         }
     }
     stroking_ = false;

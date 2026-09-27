@@ -46,6 +46,12 @@ public:
 
     void clear() { store_.clear(); }
     Rect extent() const { return store_.extent(); }
+    // Pixel-precise bbox of alpha>0 (extent() is tile-granular: a 1px dab
+    // reports its whole 64x64 tile). Scans stored tiles only, so the cost
+    // scales with ink, not canvas. Transform frames and lifts derive from
+    // this — tile-snapped rects would move the pivot whenever ink crosses a
+    // tile boundary.
+    Rect contentBounds() const;
     size_t tileCount() const { return store_.tileCount(); }
     const TileStore &store() const { return store_; }
     TileStore &store() { return store_; }

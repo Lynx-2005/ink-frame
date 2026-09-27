@@ -15,6 +15,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace ink {
@@ -56,8 +57,19 @@ public:
 
     void setRenderFn(RenderFn fn) { renderFn_ = std::move(fn); }
     void requestRange(int currentFrame, int prefetchAhead = 12);
+    // Queue ONE frame (stroke-commit path): warms the frame just dirtied
+    // without waking workers to re-render a dozen animated frames behind the
+    // UI thread's synchronous release paint (the release-freeze source).
+    void requestSingle(int frame);
     std::shared_ptr<PaintDevice> get(int frame); // may be nullptr if not ready
     void invalidate(int fromFrame = 0); // bump generation, drop >= fromFrame
+    // Drop ONLY [lo,hi] but bump the generation (invalidate() semantics) so an
+    // in-flight render started before the erase can never store over a slot a
+    // later request recreates: its generation no longer matches and it is
+    // discarded. Complete entries OUTSIDE the range keep their images — that is
+    // the win over invalidate(): an adjustment edit inside one bar cannot nuke
+    // projections of frames the bar excludes.
+    void invalidateRange(int lo, int hi);
     void invalidateAll() { invalidate(0); }
     size_t cachedCount() const;
     void waitFor(int frame, int timeoutMs = 2000);
@@ -70,6 +82,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::queue<int> pending_;
+    std::unordered_set<int> pendingSet_; // O(1) dup check (was O(n) queue copy per frame)
     std::map<int, Entry> cache_;
     std::atomic<uint64_t> generation_{1};
     std::atomic<bool> stop_{false};
@@ -92,6 +105,11 @@ public:
     // Advance by dt seconds; returns current integer frame + whether frame changed
     std::pair<int,bool> advance(double dtSec);
     int currentFrame() const { return (int)std::round(currentFloat_); }
+    // Sub-frame position, the seam for sampling animation between whole frames.
+    // Nothing evaluates at fractional time yet: keys live on frames and the
+    // transform is resampled sub-pixel, so motion is already smooth. Exposed so
+    // a future sampler does not have to reach into the engine's guts.
+    double currentTime() const { return double(currentFloat_); }
     void seek(int f) { currentFloat_ = (float)std::clamp(f, start_, end_); }
 private:
     int fps_{24}, start_{0}, end_{120};

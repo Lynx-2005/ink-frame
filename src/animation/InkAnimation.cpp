@@ -23,13 +23,19 @@ void compositeOnionSkin(PaintDevice &canvas, const PaintDevice &frame,
     for (auto &g : ghost) lookup.emplace(g.first, g.second.get());
     canvas.store().updateTilesInRect(
         e, nullptr, [&](TileData &t, int ox, int oy, const Rect &c) {
+            // Canvas and ghost share coordinates: one lookup per TILE, not
+            // per pixel as before.
+            const TileData *gt = nullptr;
+            {
+                auto it = lookup.find(TilePos{floorDiv(ox, kTileSize), floorDiv(oy, kTileSize)});
+                if (it != lookup.end()) gt = it->second;
+            }
+            if (!gt) return;
             for (int y = c.y; y < c.y + c.h; ++y) {
                 PixelRGBA8 *row = &t.px[(y - oy) * kTileSize + (c.x - ox)];
+                const PixelRGBA8 *grow = &gt->px[(modPos(y, kTileSize)) * kTileSize];
                 for (int x = c.x; x < c.x + c.w; ++x, ++row) {
-                    auto it = lookup.find(TilePos{floorDiv(x, kTileSize), floorDiv(y, kTileSize)});
-                    if (it == lookup.end()) continue;
-                    const TileData *gt = it->second;
-                    PixelRGBA8 p = gt->px[modPos(y, kTileSize) * kTileSize + modPos(x, kTileSize)];
+                    PixelRGBA8 p = grow[modPos(x, kTileSize)];
                     if (p.a == 0) continue;
                     // Coverage-only tint: the hue is EXACTLY `tint` whatever the
                     // ink value was. Modulating by luminance (the old path) made
@@ -55,11 +61,25 @@ void FrameCache::requestRange(int cur, int ahead) {
     std::lock_guard<std::mutex> lk(mutex_);
     for (int f = cur; f <= cur + ahead; ++f) {
         if (cache_.count(f)) continue;
+        // Already queued (a previous request that no worker picked up yet):
+        // queueing it again would re-render the same frame per caller — the
+        // per-dab churn that starved the UI while an adjustment animated.
+        if (pendingSet_.count(f)) continue;
         // bound queue
         if (pending_.size() > maxFrames_ + 16) break;
         pending_.push(f);
+        pendingSet_.insert(f);
     }
     cv_.notify_all();
+}
+void FrameCache::requestSingle(int frame) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (cache_.count(frame)) return;
+    if (pendingSet_.count(frame)) return;
+    if (pending_.size() > maxFrames_ + 16) return;
+    pending_.push(frame);
+    pendingSet_.insert(frame);
+    cv_.notify_one(); // one worker is enough for the release frame
 }
 std::shared_ptr<PaintDevice> FrameCache::get(int frame) {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -76,8 +96,35 @@ void FrameCache::invalidate(int fromFrame) {
     }
     // clear pending >= fromFrame
     std::queue<int> keep;
-    while (!pending_.empty()) { int f = pending_.front(); pending_.pop(); if (f < fromFrame) keep.push(f); }
+    std::unordered_set<int> keepSet;
+    while (!pending_.empty()) { int f = pending_.front(); pending_.pop(); if (f < fromFrame) { keep.push(f); keepSet.insert(f); } }
     pending_ = std::move(keep);
+    pendingSet_ = std::move(keepSet);
+}
+void FrameCache::invalidateRange(int lo, int hi) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (lo > hi) std::swap(lo, hi);
+    // Bump the generation like invalidate() does: without it, a render that
+    // started before the erase can store over the slot a LATER request already
+    // recreated for the same frame (same generation, present slot -> store
+    // passes -> stale pixels cached). With the bump an in-flight job for an
+    // OUTSIDE frame is merely discarded and re-rendered on demand — entries
+    // already complete and cached outside [lo,hi] keep their valid images,
+    // which is the whole point of the range version.
+    ++generation_;
+    for (auto it = cache_.begin(); it != cache_.end();) {
+        if (it->first >= lo && it->first <= hi) it = cache_.erase(it);
+        else ++it;
+    }
+    std::queue<int> keep;
+    std::unordered_set<int> keepSet;
+    while (!pending_.empty()) {
+        int f = pending_.front();
+        pending_.pop();
+        if (f < lo || f > hi) { keep.push(f); keepSet.insert(f); }
+    }
+    pending_ = std::move(keep);
+    pendingSet_ = std::move(keepSet);
 }
 size_t FrameCache::cachedCount() const {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -102,6 +149,7 @@ void FrameCache::workerLoop() {
           cv_.wait(lk, [&]{ return stop_ || !pending_.empty(); });
           if (stop_) return;
           frame = pending_.front(); pending_.pop();
+          pendingSet_.erase(frame);
           gen = generation_.load();
           if (cache_.count(frame)) continue;
           cache_[frame] = Entry{frame, gen, nullptr, false};

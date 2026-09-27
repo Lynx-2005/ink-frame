@@ -11,6 +11,7 @@
 #include <QSettings>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace ink {
 

@@ -1,7 +1,10 @@
 #pragma once
 // Project format + export. Production:
-// - .inkframe = directory: project.json + layer_<i>_frame_<f>.raw (RGBA8)
-// - project.json: size, fps, frameCount, layers, keys
+// - .inkframe = directory: project.json + cell_<track>_<key>_<path>.raw (RGBA8,
+//   cropped to the painted extent; an empty file = a blank layer)
+// - project.json v2: size, fps, frameCount, folder/track tree, per-cell
+//   exposure spans, and each cell's own layer stack (paint/group, opacity,
+//   blend, visibility, lock)
 // - Export: PNG sequence (via Qt in UI) + MP4 via external ffmpeg binary
 //   (same strategy as Krita KisFFMpegWrapper — never link libav).
 #include <string>
@@ -15,6 +18,8 @@ struct ProjectSaveResult { bool ok{false}; std::string error; };
 struct ProjectLoadResult { bool ok{false}; std::string error; };
 
 ProjectSaveResult saveProject(const Image &img, const std::string &dirPath);
+// Stub: validates that project.json exists. Parsing the v2 tree is a separate
+// feature (the app has no save/load UI yet).
 ProjectLoadResult loadProject(Image &img, const std::string &dirPath);
 
 // FFmpeg export command builder (UI shells out via QProcess).

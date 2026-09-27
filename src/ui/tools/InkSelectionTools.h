@@ -2,8 +2,8 @@
 // Selection tools: rectangle, ellipse and freehand lasso. They all share the
 // drag-preview + commit-to-mask lifecycle; the mask itself lives on the
 // document, so painting and filling are clipped by it. The lasso can run in
-// smart mode, where the outline snaps to nearby drawn edges.
-#include "core/InkMagnetic.h"
+// whole-stroke mode, where touching any part of a drawn stroke (one pen-down
+// to pen-up counts as one stroke) selects the complete stroke.
 #include "core/InkSelection.h"
 #include "ui/tools/InkTool.h"
 #include <QPainterPath>
@@ -70,11 +70,11 @@ protected:
 class LassoSelectTool : public SelectionToolBase {
 public:
     QString id() const override { return QStringLiteral("lasso"); }
-    void beginPrimary(const ToolEvent &e) override;
-    void continuePrimary(const ToolEvent &e) override;
+    void endPrimary(const ToolEvent &e) override;
     QString statusHint() const override {
-        return smart_ ? QStringLiteral("Smart snap: drag roughly around the drawing, the outline clings to its edges")
-                      : QStringLiteral("Drag to select · Shift adds · Alt subtracts · Ctrl intersects");
+        return wholeStroke_
+                   ? QStringLiteral("Whole stroke: circle any part of a stroke to select all of it")
+                   : QStringLiteral("Drag to select · Shift adds · Alt subtracts · Ctrl intersects");
     }
 
 protected:
@@ -83,11 +83,12 @@ protected:
     void addExtraOptions(QHBoxLayout *row, QWidget *page) override;
 
 private:
-    void appendSnapped(const Vec2 &to);
-
-    bool smart_{false};
-    int snapRadius_{10};
-    MagneticField field_;
+    // Whole-stroke mode (off = plain freehand area). Touching any pixel of a
+    // stroke selects the complete stroke on the current layer.
+    bool wholeStroke_{false};
+    // Forgiveness radius: the lasso counts as touching ink within this many
+    // pixels of its edge, so a rough circle still grabs the stroke.
+    int gapRadius_{10};
 };
 
 // Shared helpers for the shell actions (Select All / Deselect / Invert).

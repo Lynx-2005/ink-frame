@@ -36,6 +36,9 @@ public:
     QString activeToolId() const { return activeId_; }
     Tool *activeTool() const;
     void setActiveTool(const QString &id);
+    // The app's one manager, for tools that switch the active tool
+    // (transform mode dropdown -> dedicated tool entries). Null in tests.
+    static ToolManager *activeManager() { return activeManager_; }
 
     // event routing (canvas -> active tool)
     void press(const ToolEvent &e);
@@ -44,6 +47,8 @@ public:
     void cancel();
     // Arrow keys: forwarded to the active tool, true when it consumed them.
     bool nudge(int dx, int dy, Qt::KeyboardModifiers mods);
+    // Enter/Apply: forwarded to the active tool, true when it consumed it.
+    bool commit();
     // Mirror the active region (move tool).
     void flipSelection(bool horizontal);
 
@@ -59,6 +64,7 @@ private:
     void buildActions();
     Tool *ensureTool(const QString &id);
 
+    static ToolManager *activeManager_;
     ToolContext *ctx_;
     QMap<QString, QAction *> actions_;
     QList<QAction *> windowActions_;

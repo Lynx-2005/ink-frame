@@ -11,6 +11,8 @@
 // frame". A track with no key is an EMPTY track (no cell at all).
 #include "animation/InkKeyframe.h"
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace ink {
@@ -24,6 +26,19 @@ struct TimelineRow {
     ScalarChannel opacity;
     bool showThumbs{false};
     int colorOverride{-1}; // -1 = folder hue; else clip palette index
+    // --- adjustment rows ---
+    // An adjustment layer owns no cells: its lane shows keyframes instead. The
+    // keys themselves are NOT mirrored here — the widget reads them from the
+    // layer through Document, so there is exactly one copy of the truth.
+    bool isAdjustment{false};
+    std::string targetId;      // stable id of the animated layer, "" when unlinked
+    bool targetExists{true};   // false = the link points at a deleted layer
+    // --- camera rows (Clip-Studio-style 2D camera) ---
+    // A camera owns no cells either: its lane shows keyframe diamonds read
+    // live from the CameraLayer through Document. scope: 0=layer,1=folder,2=global.
+    bool isCamera{false};
+    int cameraScope{0};
+    std::string cameraTarget; // stable id of scoped layer/folder, "" for global
 };
 
 // One cell of a track: inclusive frame range plus the track-local ordinal
@@ -69,7 +84,6 @@ public:
     TimelineRow *row(const std::string &id);
     const TimelineRow *row(const std::string &id) const;
     std::string folderOfTrack(const std::string &trackId) const;
-
     int currentFrame() const { return current_; }
     void setCurrentFrame(int f);
     int frameCount() const { return frameCount_; }
@@ -99,7 +113,6 @@ public:
     // Legacy flattened view (all tracks, folder order). Kept for compat.
     // Rebuilt lazily from folders.
     const std::vector<TimelineRow> &rows() const;
-
     // Camera scalar channel. Data only: no timeline row is rendered for it
     // (the camera track was removed from the UI). Kept for the future
     // position/zoom track and for project round-tripping.
@@ -108,10 +121,20 @@ public:
 
 private:
     void rebuildFlat() const;
+    // O(1) track lookup: scrub/playback used to scan every folder+track per
+    // query (O(F*T) string compares per frame per track). Positions, not
+    // pointers: folder vectors reallocate on addTrack.
+    void rebuildIndex() const;
+    const TimelineRow *findRow(const std::string &id) const;
+    TimelineRow *findRow(const std::string &id);
+    void markIndexDirty() { indexDirty_ = true; }
     std::vector<TimelineFolder> folders_;
     ScalarChannel camera_;
     mutable std::vector<TimelineRow> flatCache_;
     mutable bool flatDirty_{true};
+    // track id -> (folder index, track index) within folders_
+    mutable std::unordered_map<std::string, std::pair<int, int>> rowIndex_;
+    mutable bool indexDirty_{true};
     int current_{0}, frameCount_{120}, fps_{24};
     int nextFolder_{1};
 };

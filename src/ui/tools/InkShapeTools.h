@@ -29,7 +29,7 @@ public:
 protected:
     virtual bool supportsFill() const { return true; }
     virtual QPainterPath previewPath(const Vec2 &a, const Vec2 &b) const = 0;
-    virtual void commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
+    virtual void rasterize(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
                         TileMemento &memento, Rect &dirty) const = 0;
 
     bool dragging_{false};
@@ -43,7 +43,7 @@ public:
 protected:
     bool supportsFill() const override { return false; }
     QPainterPath previewPath(const Vec2 &a, const Vec2 &b) const override;
-    void commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
+    void rasterize(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
                 TileMemento &memento, Rect &dirty) const override;
 };
 
@@ -53,7 +53,7 @@ public:
 
 protected:
     QPainterPath previewPath(const Vec2 &a, const Vec2 &b) const override;
-    void commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
+    void rasterize(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
                 TileMemento &memento, Rect &dirty) const override;
 };
 
@@ -63,7 +63,7 @@ public:
 
 protected:
     QPainterPath previewPath(const Vec2 &a, const Vec2 &b) const override;
-    void commit(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
+    void rasterize(ToolContext &ctx, PaintDevice &dev, const Vec2 &a, const Vec2 &b,
                 TileMemento &memento, Rect &dirty) const override;
 };
 

@@ -20,7 +20,7 @@ void FillTool::beginPrimary(const ToolEvent &e) {
         return;
     PaintDevice *target = ctx_->editableDevice();
     if (!target) {
-        ctx_->setStatus(QStringLiteral("Layer is locked or not paintable"));
+        ctx_->setStatus(ctx_->blockedHint());
         return;
     }
     const int w = ctx_->doc()->image().width();

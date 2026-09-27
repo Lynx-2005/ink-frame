@@ -9,41 +9,64 @@ Layer::Layer(std::string name, LayerType type) : id_(s_nextId_++), name_(std::mo
 
 void Layer::setOpacity(float o) { opacity_ = std::clamp(o, 0.0f, 1.0f); }
 
-PaintDevice *PaintLayer::deviceAt(int frame, bool create) {
-    auto it = frames_.find(frame);
-    if (it != frames_.end()) return it->second.get();
+Cell *PaintLayer::cellAt(int frame, bool create) {
+    auto it = cells_.find(frame);
+    if (it != cells_.end()) return it->second.get();
     if (!create) return nullptr;
-    auto d = std::make_unique<PaintDevice>();
-    auto *p = d.get();
-    frames_[frame] = std::move(d);
+    auto c = std::make_unique<Cell>(); // one default paint layer
+    Cell *p = c.get();
+    cells_[frame] = std::move(c);
     return p;
 }
-const PaintDevice *PaintLayer::deviceAt(int frame) const {
-    auto it = frames_.find(frame);
-    return it == frames_.end() ? nullptr : it->second.get();
+
+const Cell *PaintLayer::cellAt(int frame) const {
+    auto it = cells_.find(frame);
+    return it == cells_.end() ? nullptr : it->second.get();
 }
-bool PaintLayer::hasKeyAt(int frame) const { return frames_.count(frame) > 0; }
+
+void PaintLayer::assignCell(int frame, std::unique_ptr<Cell> cell) {
+    if (!cell) return;
+    cells_[frame] = std::move(cell);
+}
+
+PaintDevice *PaintLayer::deviceAt(int frame, bool create) {
+    Cell *c = cellAt(frame, create);
+    if (!c) return nullptr;
+    CellLayer *l = c->activePaintLayer();
+    return l ? l->device() : nullptr;
+}
+
+const PaintDevice *PaintLayer::deviceAt(int frame) const {
+    const Cell *c = cellAt(frame);
+    if (!c) return nullptr;
+    const CellLayer *l = c->activePaintLayer();
+    return l ? l->device() : nullptr;
+}
+
+bool PaintLayer::hasKeyAt(int frame) const { return cells_.count(frame) > 0; }
+
 void PaintLayer::setKeyAt(int frame, bool hasKey) {
     if (hasKey) {
         if (hasKeyAt(frame)) return;
         // A new key splits any longer cell before it, and starts out holding
         // to the next key / the end of the project (callers that want a
         // one-frame cell set the span explicitly).
-        auto next = frames_.lower_bound(frame);
-        if (next != frames_.begin()) {
+        auto next = cells_.lower_bound(frame);
+        if (next != cells_.begin()) {
             auto prev = std::prev(next);
             if (spanEnd(prev->first) >= frame) spanEnd_[prev->first] = frame - 1;
         }
-        frames_[frame] = std::make_unique<PaintDevice>();
+        cells_[frame] = std::make_unique<Cell>();
         spanEnd_[frame] = kOpenEnd;
     } else {
-        frames_.erase(frame);
+        cells_.erase(frame);
         spanEnd_.erase(frame);
     }
 }
+
 std::vector<int> PaintLayer::keys() const {
-    std::vector<int> k; k.reserve(frames_.size());
-    for (auto &[f,_] : frames_) k.push_back(f);
+    std::vector<int> k; k.reserve(cells_.size());
+    for (auto &[f,_] : cells_) k.push_back(f);
     return k;
 }
 
@@ -51,8 +74,8 @@ int PaintLayer::spanEnd(int key) const {
     auto it = spanEnd_.find(key);
     if (it != spanEnd_.end()) return it->second;
     if (!hasKeyAt(key)) return key;
-    auto next = frames_.upper_bound(key); // legacy keys: hold to the next one
-    return next == frames_.end() ? kOpenEnd : next->first - 1;
+    auto next = cells_.upper_bound(key); // legacy keys: hold to the next one
+    return next == cells_.end() ? kOpenEnd : next->first - 1;
 }
 
 int PaintLayer::spanEndClamped(int key, int maxFrame) const {
@@ -64,14 +87,14 @@ int PaintLayer::spanEndClamped(int key, int maxFrame) const {
 void PaintLayer::setSpanEnd(int key, int end) {
     if (!hasKeyAt(key)) return;
     if (end < key) end = key; // a cell is at least one frame long
-    auto next = frames_.upper_bound(key);
-    if (next != frames_.end() && end >= next->first) end = next->first - 1;
+    auto next = cells_.upper_bound(key);
+    if (next != cells_.end() && end >= next->first) end = next->first - 1;
     spanEnd_[key] = end;
 }
 
 int PaintLayer::exposureAt(int frame) const {
-    auto it = frames_.upper_bound(frame);
-    if (it == frames_.begin()) return -1;
+    auto it = cells_.upper_bound(frame);
+    if (it == cells_.begin()) return -1;
     --it;
     const int key = it->first;
     const int e = spanEnd(key);
@@ -80,28 +103,26 @@ int PaintLayer::exposureAt(int frame) const {
 
 void PaintLayer::copyDeviceContent(int fromKey, int toKey) {
     if (fromKey == toKey) return;
-    auto it = frames_.find(fromKey);
-    if (it == frames_.end() || !it->second) return;
+    auto it = cells_.find(fromKey);
+    if (it == cells_.end() || !it->second) return;
     const int end = spanEnd(fromKey);
-    PaintDevice *dst = deviceAt(toKey, true);
-    if (!dst) return;
-    dst->clear();
-    if (!it->second->extent().isEmpty())
-        dst->blit(*it->second, 0, 0);
+    auto copy = std::make_unique<Cell>();
+    copy->copyFrom(*it->second); // deep: fresh layer ids, copied pixels
+    cells_[toKey] = std::move(copy);
     spanEnd_[toKey] = (end == kOpenEnd) ? kOpenEnd : toKey + (end - fromKey);
     setSpanEnd(toKey, spanEnd_[toKey]); // keep the copy inside the next key
 }
 
 bool PaintLayer::moveDeviceContent(int fromKey, int toKey, bool overwrite) {
     if (fromKey == toKey) return true;
-    auto it = frames_.find(fromKey);
-    if (it == frames_.end()) return false;
+    auto it = cells_.find(fromKey);
+    if (it == cells_.end()) return false;
     if (hasKeyAt(toKey) && !overwrite) return false;
     const int end = spanEnd(fromKey);
-    std::unique_ptr<PaintDevice> dev = std::move(it->second);
-    frames_.erase(it);
+    std::unique_ptr<Cell> held = std::move(it->second);
+    cells_.erase(it);
     spanEnd_.erase(fromKey);
-    frames_[toKey] = std::move(dev);
+    cells_[toKey] = std::move(held);
     // the exposure travels with the drawing
     spanEnd_[toKey] = (end == kOpenEnd) ? kOpenEnd : toKey + (end - fromKey);
     setSpanEnd(toKey, spanEnd_[toKey]);

@@ -14,6 +14,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ink {
@@ -44,8 +45,16 @@ inline Rect uniteRect(const Rect &a, const Rect &b) {
 struct TileMemento {
     struct Entry { TilePos pos; TileShared oldTile; }; // null oldTile = tile was created
     std::vector<Entry> entries;
-    void clear() { entries.clear(); }
+    void clear() { entries.clear(); seen_.clear(); }
     bool empty() const { return entries.empty(); }
+    // First-touch guard: a stroke touching T tiles used to scan the whole
+    // entry list per tile (O(T^2) for long strokes). The set makes it O(1).
+    bool noted(const TilePos &p) const { return seen_.find(p) != seen_.end(); }
+    void record(const TilePos &p, TileShared oldTile) {
+        if (seen_.insert(p).second) entries.push_back({p, std::move(oldTile)});
+    }
+private:
+    std::unordered_set<TilePos, TilePosHash> seen_;
 };
 
 class TileStore {
@@ -101,6 +110,14 @@ public:
 
     // For renderer: collect tiles intersecting rect
     void tilesInRect(const Rect &r, std::vector<std::pair<TilePos, TileShared>> &out) const;
+    // Small-span snapshot for the blit hot path: fills `out` (capacity 4)
+    // with the stored tiles intersecting `r` under a SINGLE lock, with zero
+    // heap allocation. Returns the count, or -1 when the span exceeds 2x2
+    // tiles (caller falls back to tilesInRect). Blit dirty rects, dots and
+    // thumbnails are almost always <= 2x2 tiles, so the common case never
+    // builds an unordered_map per layer per frame.
+    int snapshotSmall(const Rect &r,
+                      std::pair<TilePos, TileShared> (&out)[4]) const;
 
 private:
     // Lock-free core of writableTile; caller must hold mutex_.

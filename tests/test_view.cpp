@@ -51,6 +51,29 @@ int main() {
         INK_CHECK(v.zoom() > 0.3 && v.zoom() < 0.5); // min(800/1920,600/1080)*0.95
         printf("fit OK zoom=%f\n", v.zoom());
     }
+    // Fit keeps a ROTATED canvas inside the widget: every doc corner maps
+    // within the widget rect at any angle.
+    {
+        ViewConverter v;
+        v.setDocSize(1920, 1080);
+        v.setWidgetSize(800, 600);
+        for (double angle : {0.0, 15.0, 30.0, 45.0, 90.0, 137.0}) {
+            v.setRotation(angle);
+            v.fit();
+            for (int i = 0; i < 4; ++i) {
+                Vec2 corner{i & 1 ? 1920.0 : 0.0, i & 2 ? 1080.0 : 0.0};
+                Vec2 w = v.mapToWidget(corner);
+                INK_CHECK(w.x >= 0.0 && w.x <= 800.0);
+                INK_CHECK(w.y >= 0.0 && w.y <= 600.0);
+            }
+            const Vec2 c = v.mapToWidget({960, 540});
+            INK_CHECK(near(c.x, 400.0, 1e-6) && near(c.y, 300.0, 1e-6));
+        }
+        v.setRotation(30.0);
+        v.fit();
+        INK_CHECK(v.zoom() < 800.0 / 1920.0 * 0.95); // must zoom out to clear the corners
+        printf("rotated_fit OK zoom=%f\n", v.zoom());
+    }
     // Still-point zoom: doc point under cursor is identical before/after
     {
         ViewConverter v;

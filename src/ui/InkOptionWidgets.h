@@ -5,10 +5,12 @@
 
 class QComboBox;
 class QFrame;
+class QGridLayout;
 class QHBoxLayout;
 class QLabel;
 class QSlider;
 class QToolButton;
+class QVBoxLayout;
 class QWidget;
 
 namespace ink {
@@ -28,6 +30,16 @@ QToolButton *button(const QString &text, QWidget *parent);
 QFrame *separator(QWidget *parent);
 // caption + control, appended to a row layout.
 void addField(QHBoxLayout *layout, const QString &caption, QWidget *control);
+// ---- form grid (settings popups): every row shares one caption column, so
+//     captions and controls line up in straight columns across the page. ----
+// Caption column width shared by every formRow on the page.
+inline constexpr int kFormCaptionWidth = 72;
+// Section header: small-caps caption over a hairline rule, appended to a page.
+void addSection(QVBoxLayout *page, const QString &text, QWidget *parent);
+// One grid row: right-aligned caption + control (+ optional trailing widget,
+// e.g. a value readout or a toggle). The grid must have 3 columns.
+void formRow(QGridLayout *grid, int row, const QString &caption, QWidget *control,
+             QWidget *trailing = nullptr);
 
 } // namespace InkOptions
 } // namespace ink

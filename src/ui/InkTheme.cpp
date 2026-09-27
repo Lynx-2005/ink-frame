@@ -49,6 +49,10 @@ QString InkTheme::styleSheet() {
         "QWidget#ToolOptionsBar QComboBox:hover { border-color: #45464E; }"
         "QWidget#ToolOptionsBar QComboBox::drop-down { border: none; width: 16px; }"
         "QWidget#ToolOptionsBar QComboBox QAbstractItemView { background: #26272C; border: 1px solid #45464E; selection-background-color: #3A4054; }"
+        "QWidget#ToolOptionsBar QDoubleSpinBox { background: #26272C; border: 1px solid #34353C; border-radius: 3px; padding: 1px 3px 1px 6px; min-height: 22px; max-height: 22px; font-size: 11px; color: #C8C8C8; }"
+        "QWidget#ToolOptionsBar QDoubleSpinBox:hover { border-color: #45464E; }"
+        "QWidget#ToolOptionsBar QDoubleSpinBox:focus { border-color: #8ABEEC; }"
+        "QWidget#ToolOptionsBar QDoubleSpinBox::up-button, QWidget#ToolOptionsBar QDoubleSpinBox::down-button { width: 12px; background: transparent; border: none; }"
         "QWidget#ToolOptionsBar QToolButton { border-radius: 3px; padding: 2px; icon-size: 14px; min-width: 22px; min-height: 22px; }"
         "QWidget#ToolOptionsBar QToolButton:checked { background: #53728E; border-color: #53728E; }"
         "QWidget#ToolOptionsBar QSlider { background: transparent; border: none; padding: 0; min-height: 20px; max-height: 20px; }"
@@ -96,7 +100,7 @@ QString InkTheme::styleSheet() {
         "QWidget#TimelineToolbar { background: #1E1F24; border-bottom: 1px solid #2C2D34; }"
         "QWidget#TimelineToolbar QToolButton { padding: 3px; border: 1px solid transparent; border-radius: 4px; icon-size: 16px; min-width: 24px; min-height: 24px; }"
         "QWidget#TimelineToolbar QToolButton:hover { background: #2E3038; border-color: #3A3B42; }"
-        "QWidget#TimelineToolbar QToolButton:checked { background: #3A4054; border-color: #4A5A78; }"
+        "QWidget#TimelineToolbar QToolButton:checked { background: #53728E; border-color: #53728E; }"
         "QWidget#TimelineToolbar QToolButton:disabled { color: #5A5C64; }"
         "QWidget#TimelineToolbar QToolButton#TransportPlay { min-width: 28px; min-height: 28px; icon-size: 18px; }"
         "QWidget#TimelineToolbar QLabel { color: #9698A0; font-size: 11px; }"
@@ -110,8 +114,80 @@ QString InkTheme::styleSheet() {
         "QWidget#TimelineToolbar QSlider::groove:horizontal { height: 3px; background: #2C2D34; border-radius: 2px; }"
         "QWidget#TimelineToolbar QSlider::handle:horizontal { width: 10px; margin: -5px 0; border-radius: 5px; background: #8A8C96; }"
         "QWidget#TimelineToolbar QSlider::handle:horizontal:hover { background: #8ABEEC; }"
+        // ---- transform settings popup: its own scope, so the panel looks the
+        //     same no matter where it is parented. One flat card surface with a
+        //     real title bar, hairline section rules and 24px fields; the pages
+        //     behind it stay transparent and every row shares one caption column. ----
+        "QFrame#TransformPopup { background: #26272C; border: 1px solid #34353C; border-radius: 8px; }"
+        "QFrame#TransformPopup QLabel { background: transparent; }"
+        "QWidget#CardStack { background: transparent; border: none; }"
+        "QLabel#PopupTitle { color: #E8E8EA; font-size: 13px; font-weight: 600; background: transparent; }"
+        "QLabel#OptSection { color: #7C7E88; font-size: 10px; font-weight: 700; background: transparent; }"
+        "QFrame#OptSepH { background: #2C2D34; border: none; min-height: 1px; max-height: 1px; }"
+        // fields: combos and spinboxes share one shape, hover + focus ring
+        "QFrame#TransformPopup QComboBox, QFrame#TransformPopup QDoubleSpinBox { background: #1E1F24; border: 1px solid #34353C; border-radius: 4px; padding: 2px 8px; min-height: 24px; max-height: 24px; font-size: 12px; color: #E8E8EA; }"
+        "QFrame#TransformPopup QComboBox:hover, QFrame#TransformPopup QDoubleSpinBox:hover { border-color: #45464E; }"
+        "QFrame#TransformPopup QComboBox:focus, QFrame#TransformPopup QDoubleSpinBox:focus { border-color: #8ABEEC; }"
+        "QFrame#TransformPopup QComboBox::drop-down { width: 22px; border: none; border-left: 1px solid #34353C; background: transparent; }"
+        // The drop-down / stepper glyphs themselves are painted in code
+        // (InkCombo / InkSpinBox): a styled sub-control makes Qt skip its own
+        // arrow, and this app ships no image assets to put in its place.
+        "QFrame#TransformPopup QComboBox QAbstractItemView { background: #26272C; border: 1px solid #45464E; border-radius: 4px; padding: 4px; outline: 0; selection-background-color: #3A4054; }"
+        "QFrame#TransformPopup QDoubleSpinBox::up-button, QFrame#TransformPopup QDoubleSpinBox::down-button { width: 16px; background: transparent; border: none; }"
+        // sliders: accent-filled track, larger handle
+        "QFrame#TransformPopup QSlider { background: transparent; border: none; padding: 0; min-height: 22px; max-height: 22px; }"
+        "QFrame#TransformPopup QSlider::groove:horizontal { height: 4px; background: #34353C; border-radius: 2px; }"
+        "QFrame#TransformPopup QSlider::sub-page:horizontal { background: #53728E; border-radius: 2px; }"
+        "QFrame#TransformPopup QSlider::handle:horizontal { width: 12px; margin: -5px 0; border-radius: 6px; background: #E8E8EA; }"
+        "QFrame#TransformPopup QSlider::handle:horizontal:hover { background: #8ABEEC; }"
+        // buttons: bordered actions, flat toggles, both with a visible hover
+        "QFrame#TransformPopup QToolButton { border-radius: 4px; padding: 2px 6px; icon-size: 14px; min-height: 24px; color: #C8C8C8; }"
+        "QFrame#TransformPopup QToolButton:hover { background: #2E3038; }"
+        "QFrame#TransformPopup QToolButton#OptButton { background: #2A2B31; border: 1px solid #3A3B42; padding: 2px 10px; }"
+        "QFrame#TransformPopup QToolButton#OptButton:hover { background: #34353C; border-color: #45464E; }"
+        "QFrame#TransformPopup QToolButton#OptButton:pressed { background: #1E1F24; }"
+        "QFrame#TransformPopup QToolButton#OptToggle { padding: 2px 4px; }"
+        "QFrame#TransformPopup QToolButton#OptToggle:checked { color: #E8E8EA; }"
         "QFrame#Sep { background: #2C2D34; border: none; min-width: 1px; max-width: 1px; }"
         "QLabel#TimelineStatus { color: #6E7078; font-size: 10px; }"
+        // ---- ParamField: the value editor the easing graph's value strip uses.
+        //      The floating TransformPanel it used to live in is gone. ----
+        "QLineEdit#ParamField { background: #1E1F24; border: 1px solid #2C2D34; border-radius: 4px; padding: 1px 6px; color: #E8E8EA; font-size: 12px; }"
+        "QLineEdit#ParamField:hover { border-color: #45464E; }"
+        "QLineEdit#ParamField:focus { border-color: #8ABEEC; }"
+        // ---- easing graph: custom-painted, so this only styles what sits on it ----
+        "QWidget#CurveEditor { background: #1E1F24; border-left: 1px solid #2C2D34; }"
+        "QWidget#CurveEditor QLabel { color: #9698A0; font-size: 11px; background: transparent; }"
+        "QLabel#CurveTitle { color: #E8E8EA; font-size: 11px; font-weight: 600; }"
+        "QLabel#CurveReadout { font-family: monospace; font-size: 11px; color: #C8C8C8; }"
+        "QWidget#CurveEditor QToolButton { border: 1px solid transparent; border-radius: 4px; padding: 3px; icon-size: 15px; min-width: 22px; min-height: 22px; }"
+        "QWidget#CurveEditor QToolButton:hover { background: #2E3038; border-color: #3A3B42; }"
+        "QWidget#CurveEditor QToolButton:checked { background: #53728E; border-color: #53728E; }"
+        "QWidget#CurveEditor QToolButton:disabled { color: #5A5C64; }"
+        "QWidget#CurveEditor QComboBox { background: #24252B; border: 1px solid #2C2D34; border-radius: 4px; padding: 1px 6px; min-height: 22px; max-height: 22px; font-size: 11px; }"
+        "QWidget#CurveEditor QComboBox:hover { border-color: #45464E; }"
+        "QWidget#CurveEditor QComboBox::drop-down { width: 20px; border: none; border-left: 1px solid #2C2D34; }"
+        "QWidget#CurveEditor QComboBox QAbstractItemView { background: #26272C; border: 1px solid #45464E; border-radius: 4px; padding: 4px; outline: 0; selection-background-color: #3A4054; }"
+        // ---- layer panel (right): the timeline gutter's row language on a card ----
+        "QWidget#LayerPanelCard { background: #26272C; border: 1px solid #34353C; border-radius: 10px; }"
+        "QWidget#LayerPanelCard QLabel { background: transparent; }"
+        "QWidget#LayerPanelCard QScrollArea { background: transparent; border: none; }"
+        "QWidget#LayerPanelCard QScrollArea > QWidget#qt_scrollarea_viewport { background: transparent; }"
+        "QLabel#PanelTitle { color: #E8E8EA; font-size: 14px; font-weight: 700; }"
+        "QLabel#PanelContext { color: #6E7078; font-size: 10px; }"
+        "QWidget#LayerPanelCard QToolButton { border-radius: 3px; padding: 3px; icon-size: 16px; min-width: 24px; min-height: 24px; }"
+        "QWidget#LayerPanelCard QToolButton:hover { background: #2E3038; }"
+        "QWidget#LayerPanelCard QToolButton:disabled { color: #5A5C64; }"
+        "QWidget#LayerPanelCard QLineEdit#LayerRename { background: #1E1F24; border: 1px solid #8ABEEC; border-radius: 3px; padding: 1px 4px; font-size: 11px; }"
+        "QWidget#LayerPanelCard QSlider { background: transparent; border: none; padding: 0; min-height: 20px; max-height: 20px; }"
+        "QWidget#LayerPanelCard QSlider::groove:horizontal { height: 3px; background: #34353C; border-radius: 2px; }"
+        "QWidget#LayerPanelCard QSlider::sub-page:horizontal { background: #53728E; border-radius: 2px; }"
+        "QWidget#LayerPanelCard QSlider::handle:horizontal { width: 10px; margin: -4px 0; border-radius: 5px; background: #C8C8C8; }"
+        "QWidget#LayerPanelCard QSlider::handle:horizontal:hover { background: #8ABEEC; }"
+        "QWidget#LayerPanelCard QComboBox { background: #24252B; border: 1px solid #2C2D34; border-radius: 4px; padding: 1px 6px; min-height: 22px; max-height: 22px; font-size: 11px; }"
+        "QWidget#LayerPanelCard QComboBox:hover { border-color: #45464E; }"
+        "QWidget#LayerPanelCard QComboBox:focus { border-color: #8ABEEC; }"
+        "QWidget#LayerPanelCard QComboBox QAbstractItemView { background: #26272C; border: 1px solid #45464E; selection-background-color: #3A4054; }"
     );
 }
 

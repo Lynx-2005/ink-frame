@@ -188,6 +188,85 @@ void p_picker(QPainter &p, const QRectF &r, const QColor &c) {
     p.restore();
 }
 
+// Transform: a frame with free corner handles — the shape of the tool itself.
+void p_transform(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen frame(c, 1.5, Qt::DashLine);
+    frame.setDashPattern({2.6, 2.2});
+    p.setPen(frame);
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(QRectF(6.5, 6.5, 11.0, 11.0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    const QPointF handles[4] = {{4.8, 4.8}, {19.2, 4.8}, {19.2, 19.2}, {4.8, 19.2}};
+    for (const QPointF &h : handles)
+        p.drawRect(QRectF(h.x() - 2.0, h.y() - 2.0, 4.0, 4.0));
+    p.restore();
+}
+
+// Warp: a grid bowed to one side by a drag.
+void p_warp(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    for (int i = 0; i < 3; ++i) {
+        const double x = 5.5 + double(i) * 6.5;
+        const double bow = (i == 1) ? 3.4 : 1.7;
+        QPainterPath line;
+        line.moveTo(x, 5.0);
+        line.quadTo(x + bow, 12.0, x, 19.0);
+        p.drawPath(line);
+    }
+    p.drawLine(QPointF(4.5, 5.0), QPointF(19.5, 5.0));
+    p.drawLine(QPointF(4.5, 19.0), QPointF(19.5, 19.0));
+    p.restore();
+}
+
+// Liquify: the drop that gets pushed around.
+void p_liquify(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPainterPath drop;
+    drop.moveTo(12.0, 3.2);
+    drop.cubicTo(16.2, 8.6, 18.6, 11.4, 18.6, 14.6);
+    drop.cubicTo(18.6, 18.3, 15.7, 20.8, 12.0, 20.8);
+    drop.cubicTo(8.3, 20.8, 5.4, 18.3, 5.4, 14.6);
+    drop.cubicTo(5.4, 11.4, 7.8, 8.6, 12.0, 3.2);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(drop);
+    p.setPen(QPen(c, 1.5, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(9.2, 14.4), QPointF(14.6, 14.4));
+    p.restore();
+}
+
+// Camera: a compact body with a centred lens — never the transform frame.
+// The filled lens dot separates it from the picker bulb at small sizes.
+void p_camera(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    // viewfinder bump on top
+    p.drawRoundedRect(QRectF(9.0, 4.2, 6.0, 2.8), 1.0, 1.0);
+    // body
+    p.drawRoundedRect(QRectF(3.6, 7.0, 16.8, 11.0), 2.0, 2.0);
+    // lens ring + filled sensor dot
+    p.drawEllipse(QPointF(12.0, 12.5), 3.6, 3.6);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawEllipse(QPointF(12.0, 12.5), 1.4, 1.4);
+    // flash tick on the body's right edge
+    p.drawEllipse(QPointF(17.6, 9.6), 1.1, 1.1);
+    p.restore();
+}
+
 // Move: four-way arrow cross.
 void p_move(QPainter &p, const QRectF &r, const QColor &c) {
     p.save();
@@ -431,6 +510,14 @@ void p_menu(QPainter &p, const QRectF &r, const QColor &c) {
                    QPointF(r.center().x() + 7, r.center().y() + dy));
 }
 
+// Three vertical dots: the panel/overflow affordance in the top bar.
+void p_more(QPainter &p, const QRectF &r, const QColor &c) {
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    for (double dx : {-4.5, 0.0, 4.5})
+        p.drawEllipse(QPointF(r.center().x() + dx, r.center().y()), 1.9, 1.9);
+}
+
 void p_fit(QPainter &p, const QRectF &r, const QColor &c) {
     p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.setBrush(Qt::NoBrush);
@@ -633,6 +720,201 @@ void p_groupPlus(QPainter &p, const QRectF &r, const QColor &c) { p_folderBadge(
 void p_groupMerge(QPainter &p, const QRectF &r, const QColor &c) { p_folderBadge(p, r, c, false, false); }
 void p_ungroup(QPainter &p, const QRectF &r, const QColor &c) { p_folderBadge(p, r, c, false, true); }
 
+// --- keyframes / adjustment layers -------------------------------------------
+
+// The diamond that means "keyframe" in every animation tool there is.
+QPainterPath diamondPath(const QPointF &ctr, double rx, double ry) {
+    QPainterPath d;
+    d.moveTo(ctr.x(), ctr.y() - ry);
+    d.lineTo(ctr.x() + rx, ctr.y());
+    d.lineTo(ctr.x(), ctr.y() + ry);
+    d.lineTo(ctr.x() - rx, ctr.y());
+    d.closeSubpath();
+    return d;
+}
+
+// After Effects' adjustment-layer mark: a disc half filled. Nothing else in
+// this set is a circle, so it reads instantly in a gutter full of rectangles.
+void p_adjustment(QPainter &p, const QRectF &r, const QColor &c) {
+    const QRectF disc = r.adjusted(3.2, 3.2, -3.2, -3.2);
+    p.setPen(QPen(c, 1.6));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(disc);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    QPainterPath half;
+    half.moveTo(disc.center().x(), disc.top());
+    half.arcTo(disc, 90.0, -180.0);
+    half.closeSubpath();
+    p.fillPath(half, c);
+}
+
+void p_keyPlus(QPainter &p, const QRectF &r, const QColor &c) {
+    const double w = r.width(), h = r.height();
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.fillPath(diamondPath(QPointF(r.left() + w * 0.38, r.top() + h * 0.38), w * 0.24, h * 0.24), c);
+    const QPointF m(r.right() - w * 0.2, r.bottom() - h * 0.2);
+    const double a = w * 0.17;
+    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(m.x() - a, m.y()), QPointF(m.x() + a, m.y()));
+    p.drawLine(QPointF(m.x(), m.y() - a), QPointF(m.x(), m.y() + a));
+}
+
+void p_keyRemove(QPainter &p, const QRectF &r, const QColor &c) {
+    const double w = r.width(), h = r.height();
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.fillPath(diamondPath(QPointF(r.left() + w * 0.38, r.top() + h * 0.38), w * 0.24, h * 0.24), c);
+    const QPointF m(r.right() - w * 0.2, r.bottom() - h * 0.2);
+    const double a = w * 0.17;
+    p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(m.x() - a, m.y()), QPointF(m.x() + a, m.y()));
+}
+
+// "Jump to the previous/next keyframe": the diamond plus the direction, so the
+// two are distinguishable at 16px without relying on colour.
+void p_keyPrev(QPainter &p, const QRectF &r, const QColor &c) {
+    const double w = r.width(), h = r.height();
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.fillPath(diamondPath(QPointF(r.right() - w * 0.34, r.center().y()), w * 0.2, h * 0.2), c);
+    QPainterPath arrow;
+    const double x = r.left() + w * 0.18;
+    const double a = w * 0.16;
+    arrow.moveTo(x, r.center().y());
+    arrow.lineTo(x + a, r.center().y() - a);
+    arrow.lineTo(x + a, r.center().y() + a);
+    arrow.closeSubpath();
+    p.fillPath(arrow, c);
+}
+
+void p_keyNext(QPainter &p, const QRectF &r, const QColor &c) {
+    const double w = r.width(), h = r.height();
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.fillPath(diamondPath(QPointF(r.left() + w * 0.34, r.center().y()), w * 0.2, h * 0.2), c);
+    QPainterPath arrow;
+    const double x = r.right() - w * 0.18;
+    const double a = w * 0.16;
+    arrow.moveTo(x, r.center().y());
+    arrow.lineTo(x - a, r.center().y() - a);
+    arrow.lineTo(x - a, r.center().y() + a);
+    arrow.closeSubpath();
+    p.fillPath(arrow, c);
+}
+
+// The stopwatch: the universal "animate this property" control.
+void p_stopwatch(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(strokePen(c));
+    p.setBrush(Qt::NoBrush);
+    const QRectF body(5.4, 8.0, 13.2, 12.2);
+    p.drawEllipse(body);
+    // crown + side plungers
+    p.drawLine(QPointF(12, 4.6), QPointF(12, 8.0));
+    p.drawLine(QPointF(9.6, 4.6), QPointF(14.4, 4.6));
+    p.drawLine(QPointF(4.0, 9.6), QPointF(6.4, 10.6));
+    p.drawLine(QPointF(20.0, 9.6), QPointF(17.6, 10.6));
+    // hand
+    p.drawLine(QPointF(12, 12.6), QPointF(12, 16.4));
+    p.restore();
+}
+
+// Curve editor: axes plus the ease curve they hold.
+void p_graph(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(strokePen(c));
+    p.setBrush(Qt::NoBrush);
+    p.drawLine(QPointF(4.6, 4.0), QPointF(4.6, 19.4));
+    p.drawLine(QPointF(4.6, 19.4), QPointF(20.0, 19.4));
+    QPainterPath curve;
+    curve.moveTo(6.2, 18.4);
+    curve.cubicTo(11.0, 18.4, 13.0, 6.2, 18.6, 6.2);
+    p.drawPath(curve);
+    p.restore();
+}
+
+// Two interlocking links = the adjustment layer is bound to a target.
+void p_link(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(strokePen(c));
+    p.setBrush(Qt::NoBrush);
+    p.save();
+    p.translate(12, 12);
+    p.rotate(-45);
+    p.drawRoundedRect(QRectF(-7.6, -3.4, 9.4, 6.8), 3.4, 3.4);
+    p.drawRoundedRect(QRectF(-1.8, -3.4, 9.4, 6.8), 3.4, 3.4);
+    p.restore();
+    p.restore();
+}
+
+void p_linkBroken(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    QPen pen = strokePen(c);
+    pen.setStyle(Qt::DashLine);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    p.save();
+    p.translate(12, 12);
+    p.rotate(-45);
+    p.drawRoundedRect(QRectF(-8.4, -3.4, 9.4, 6.8), 3.4, 3.4);
+    p.drawRoundedRect(QRectF(-1.0, -3.4, 9.4, 6.8), 3.4, 3.4);
+    p.restore();
+    p.restore();
+}
+
+// Interpolation presets: the SHAPE of the segment, drawn as the curve itself.
+void p_presetEase(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(strokePen(c));
+    p.setBrush(Qt::NoBrush);
+    QPainterPath s;
+    s.moveTo(4.4, 19.0);
+    s.cubicTo(11.0, 19.0, 13.0, 5.0, 19.6, 5.0);
+    p.drawPath(s);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawEllipse(QPointF(4.4, 19.0), 1.7, 1.7);
+    p.drawEllipse(QPointF(19.6, 5.0), 1.7, 1.7);
+    p.restore();
+}
+
+void p_presetHold(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(strokePen(c));
+    p.setBrush(Qt::NoBrush);
+    QPainterPath step;
+    step.moveTo(4.4, 19.0);
+    step.lineTo(12.0, 19.0);
+    step.lineTo(12.0, 5.0);
+    step.lineTo(19.6, 5.0);
+    p.drawPath(step);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawEllipse(QPointF(4.4, 19.0), 1.7, 1.7);
+    p.drawEllipse(QPointF(19.6, 5.0), 1.7, 1.7);
+    p.restore();
+}
+
+void p_presetLinear(QPainter &p, const QRectF &r, const QColor &c) {
+    p.save();
+    grid24(p, r);
+    p.setPen(strokePen(c));
+    p.drawLine(QPointF(4.4, 19.0), QPointF(19.6, 5.0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawEllipse(QPointF(4.4, 19.0), 1.7, 1.7);
+    p.drawEllipse(QPointF(19.6, 5.0), 1.7, 1.7);
+    p.restore();
+}
+
 PaintFn fnFor(IconId id) {
     switch (id) {
     case IconId::Brush: return p_brush;
@@ -646,6 +928,10 @@ PaintFn fnFor(IconId id) {
     case IconId::SelectRect: return p_selectRect;
     case IconId::SelectEllipse: return p_selectEllipse;
     case IconId::Lasso: return p_lasso;
+    case IconId::Transform: return p_transform;
+    case IconId::Camera: return p_camera;
+    case IconId::Warp: return p_warp;
+    case IconId::Liquify: return p_liquify;
     case IconId::ChevronLeft: return p_chevronLeft;
     case IconId::ChevronRight: return p_chevronRight;
     case IconId::Swap: return p_swap;
@@ -674,6 +960,7 @@ PaintFn fnFor(IconId id) {
     case IconId::Undo: return p_undo;
     case IconId::Redo: return p_redo;
     case IconId::Menu: return p_menu;
+    case IconId::More: return p_more;
     case IconId::Fit: return p_fit;
     case IconId::Cell: return p_cell;
     case IconId::CellDuplicate: return p_cellDuplicate;
@@ -683,6 +970,18 @@ PaintFn fnFor(IconId id) {
     case IconId::Ungroup: return p_ungroup;
     case IconId::FollowHead: return p_followHead;
     case IconId::Key: return p_key;
+    case IconId::Adjustment: return p_adjustment;
+    case IconId::KeyPlus: return p_keyPlus;
+    case IconId::KeyRemove: return p_keyRemove;
+    case IconId::KeyPrev: return p_keyPrev;
+    case IconId::KeyNext: return p_keyNext;
+    case IconId::Stopwatch: return p_stopwatch;
+    case IconId::Graph: return p_graph;
+    case IconId::Link: return p_link;
+    case IconId::LinkBroken: return p_linkBroken;
+    case IconId::PresetEase: return p_presetEase;
+    case IconId::PresetHold: return p_presetHold;
+    case IconId::PresetLinear: return p_presetLinear;
     default: return p_plus;
     }
 }
@@ -719,10 +1018,31 @@ QIcon InkIcons::get(IconId id, const QColor &color, int size) {
     if (id == IconId::Play || id == IconId::Pause || id == IconId::Brush ||
         id == IconId::Eraser || id == IconId::Line || id == IconId::Rectangle ||
         id == IconId::Ellipse || id == IconId::Picker || id == IconId::Move ||
-        id == IconId::Onion) {
+        id == IconId::Transform || id == IconId::Camera || id == IconId::Warp || id == IconId::Liquify ||
+        id == IconId::Onion || id == IconId::Stopwatch || id == IconId::Graph ||
+        id == IconId::Adjustment || id == IconId::Link) {
         icon.addPixmap(render(id, InkTheme::toolGlyphOn(), size), QIcon::Normal, QIcon::On);
     }
     return icon;
+}
+
+void InkIcons::drawChevron(QPainter &p, const QRectF &cell, bool up, const QColor &color,
+                           double size) {
+    const QPointF c = cell.center();
+    const double halfW = size * 0.5;
+    const double halfH = size * 0.28;
+    const double tipY = up ? c.y() - halfH : c.y() + halfH;
+    const double endY = up ? c.y() + halfH : c.y() - halfH;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    QPainterPath path;
+    path.moveTo(c.x() - halfW, endY);
+    path.lineTo(c.x(), tipY);
+    path.lineTo(c.x() + halfW, endY);
+    p.drawPath(path);
+    p.restore();
 }
 
 } // namespace ink

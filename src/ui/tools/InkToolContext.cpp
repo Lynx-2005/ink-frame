@@ -1,4 +1,5 @@
 #include "ui/tools/InkToolContext.h"
+#include "core/InkParams.h"
 #include "ui/InkDocument.h"
 #include "ui/tools/InkTool.h"
 #include <algorithm>
@@ -20,6 +21,19 @@ PaintDevice *ToolContext::editableDevice() const {
     return doc_->editableDevice(layer, doc_->currentFrame());
 }
 
+bool ToolContext::autoKeyBlocked() const {
+    PaintLayer *layer = doc_->currentLayer();
+    if (!layer || layer->locked() || doc_->autoKeyEnabled())
+        return false;
+    return layer->exposureAt(doc_->currentFrame()) < 0;
+}
+
+QString ToolContext::blockedHint() const {
+    if (autoKeyBlocked())
+        return QStringLiteral("Autokey is off — enable auto-key or select a key cell to paint");
+    return QStringLiteral("Layer is locked or not paintable");
+}
+
 void ToolContext::setPrimaryColor(const QColor &c) {
     if (!c.isValid() || c == primary_)
         return;
@@ -28,6 +42,17 @@ void ToolContext::setPrimaryColor(const QColor &c) {
 }
 
 Selection &ToolContext::selection() { return doc_->selection(); }
+
+void ToolContext::notifySelectionChanged() {
+    // A new mask is authored in DEVICE space; on a keyframed layer the ink it
+    // clips is DISPLACED at composite time, so the ants have to be handed that
+    // map before anyone draws them. Frame changes, undo and key edits already
+    // re-synced it - changing the selection itself did not, which is why a
+    // freshly drawn lasso outline sat beside a rotated stroke instead of around
+    // it.
+    doc_->syncSelectionTransform();
+    emit selectionChanged();
+}
 
 const Selection *ToolContext::selectionClip() const {
     const Selection &s = doc_->selection();
@@ -146,9 +171,106 @@ void ToolContext::pushStrokeCommand(const QString &name, PaintDevice *device, Ti
     doc_->undo().push(std::move(cmd));
     if (PaintLayer *layer = doc_->currentLayer())
         doc_->touchLayer(layer, doc_->currentFrame());
+    // Release path: repaint, NOT rebuild. The canvas already holds every dab
+    // via the incremental path (markDirty during the stroke + the final flush
+    // each tool marks before calling here); a full rebuild would synchronously
+    // re-project the frame plus onion ghosts and re-upload the whole image —
+    // the click-release stall. Callers that need a full rebuild (undo, layer
+    // ops) call host_->rebuild() explicitly.
     if (host_)
-        host_->rebuild();
+        host_->repaint();
     emit strokeCommitted();
 }
+
+// --- keyframe recording ------------------------------------------------------
+
+AdjustmentLayer *ToolContext::recordTarget() const {
+    if (doc_->currentAdjustment()) return doc_->currentAdjustment();
+    if (PaintLayer *l = doc_->currentLayer()) return doc_->adjustmentFor(l);
+    return nullptr;
+}
+
+bool ToolContext::recording() const {
+    return doc_->autoKeyEnabled() && recordTarget() != nullptr;
+}
+
+double ToolContext::recordedValue(ParamId id, int frame) const {
+    AdjustmentLayer *a = recordTarget();
+    if (!a) return 0.0;
+    return a->params().valueAt(id, double(frame));
+}
+
+void ToolContext::beginParamRecord(const QString &label, int frame) {
+    AdjustmentLayer *a = recordTarget();
+    if (!a) return;
+    doc_->beginParamRecord(label.toStdString(), a);
+    (void)frame;
+}
+
+void ToolContext::recordParam(ParamId id, double value, int frame) {
+    doc_->recordParamValue(id, value, frame);
+}
+
+void ToolContext::endParamRecord() {
+    if (!doc_->recordActive()) return;
+    doc_->endParamRecord();
+    // The pixels never moved, but the picture did: the composite has to be
+    // rebuilt (not just repainted) and the timeline has to show the new keys.
+    if (host_)
+        host_->rebuild();
+    emit animationRecorded();
+}
+
+bool ToolContext::recordActive() const { return doc_->recordActive(); }
+
+// --- camera recording --------------------------------------------------------
+// Same one-undo-step contract as the paint path, on the camera undo stream.
+// Every entry repaints the canvas (the picture moved) and nudges the timeline
+// lane, so the diamond lands on press — not after the next hover repaint.
+
+CameraLayer *ToolContext::cameraTarget() const {
+    std::vector<CameraLayer*> all;
+    doc_->collectCameraLayers(all);
+    if (all.empty()) return nullptr;
+    for (CameraLayer *c : all)
+        if (c->scope() == CameraScope::Global && c->visible() && !c->locked()) return c;
+    for (CameraLayer *c : all)
+        if (c->visible() && !c->locked()) return c;
+    return all.front();
+}
+
+void ToolContext::beginCameraRecord(const QString &label, CameraLayer *cam) {
+    if (!cam) return;
+    doc_->beginCameraRecord(label.toStdString(), cam);
+}
+
+void ToolContext::recordCameraValue(CameraLayer *cam, ParamId id, double value, int frame) {
+    if (!cam) return;
+    doc_->recordCameraValue(cam, id, value, frame);
+    if (host_) host_->rebuild();
+    emit cameraPreviewChanged();
+}
+
+void ToolContext::endCameraRecord() {
+    doc_->endCameraRecord(); // no-op when no record is open
+    if (host_) host_->rebuild();
+    emit animationRecorded();
+}
+
+void ToolContext::cancelCameraRecord() {
+    doc_->cancelCameraRecord();
+    if (host_) host_->rebuild();
+    emit cameraPreviewChanged();
+}
+
+bool ToolContext::cameraRecordActive() const {
+    std::vector<CameraLayer*> all;
+    doc_->collectCameraLayers(all);
+    for (CameraLayer *c : all)
+        if (doc_->cameraRecordActive(c)) return true;
+    return false;
+}
+
+void ToolContext::notifyCameraPreview() { emit cameraPreviewChanged(); }
 
 } // namespace ink

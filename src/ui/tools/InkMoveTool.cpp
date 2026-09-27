@@ -5,6 +5,7 @@
 #include "ui/tools/InkToolContext.h"
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QStringList>
 #include <QToolButton>
 #include <cmath>
 
@@ -18,6 +19,20 @@ void MoveTool::activate(ToolContext &ctx) {
 
 void MoveTool::deactivate() { cancelPrimary(); }
 
+QString MoveTool::statusHint() const {
+    QString base = QStringLiteral(
+        "Drag to move the selection · Alt copies · Shift constrains · arrows nudge");
+    // Opt-in discoverability, same contract as the transform tool: a whole-layer
+    // drag on an animated layer bakes pixels unless RECORD is on, so say so.
+    if (!recording_ && !selectionScope_ && !recordKeyframes_ && ctx_ && ctx_->doc() &&
+        ctx_->doc()->autoKeyEnabled()) {
+        if (const AdjustmentLayer *a = ctx_->recordTarget())
+            if (a->params().keyCount() > 0)
+                base += QStringLiteral(" · layer has keys — enable RECORD to animate it");
+    }
+    return base;
+}
+
 void MoveTool::resetState() {
     lifted_ = FloatRegion{};
     eraseMask_ = Selection{};
@@ -27,7 +42,35 @@ void MoveTool::resetState() {
     dragging_ = false;
     copying_ = false;
     liftedOnce_ = false;
+    selectionScope_ = false;
+    recording_ = false;
+    recordFrame_ = -1;
+    freshX_ = freshY_ = false;
     offsetX_ = offsetY_ = 0;
+}
+
+// The pose this session measures against. Derived from the model, never from
+// the tool's own state, and re-read at every press so a key dragged in the
+// timeline under an open tool cannot leave the tool aiming at a stale frame.
+void MoveTool::refreshDisplayMapping() {
+    Mat3 fwd = Mat3::identity();
+    if (ctx_ && ctx_->doc()) {
+        if (PaintLayer *pl = ctx_->doc()->currentLayer()) {
+            if (!pl->params().empty()) {
+                const Rect canvas = documentRect();
+                fwd = pl->params().matrixFor(pl->params().frameOr(canvas),
+                                            double(ctx_->doc()->currentFrame()), nullptr);
+            }
+        }
+    }
+    bool invertible = false;
+    Mat3 inv = fwd.inverted(&invertible);
+    if (!invertible) { // degenerate pose: no mapping beats a singular one
+        fwd = Mat3::identity();
+        inv = Mat3::identity();
+    }
+    stateToDisplay_ = fwd;
+    displayToState_ = inv;
 }
 
 Rect MoveTool::documentRect() const {
@@ -48,7 +91,7 @@ bool MoveTool::grab(bool useSelection) {
     resetState();
     device_ = ctx_->editableDevice();
     if (!device_) {
-        ctx_->setStatus(QStringLiteral("Layer is locked or not paintable"));
+        ctx_->setStatus(ctx_->blockedHint());
         return false;
     }
     selectionScope_ = useSelection && !ctx_->selection().isEmpty();
@@ -68,19 +111,113 @@ bool MoveTool::grab(bool useSelection) {
     return true;
 }
 
-bool MoveTool::grabAt(const Vec2 &at) {
+// `at` arrives in DISPLAY space; the mask is stored in DEVICE space, so the
+// hit test has to happen where the mask actually is.
+bool MoveTool::grabAt(const Vec2 &displayAt) {
+    const Vec2 at = toDevice(displayAt);
     const Selection *m = ctx_->selectionClip();
     const bool inside = m && m->contains(int(std::floor(at.x)), int(std::floor(at.y)));
     return grab(inside);
 }
 
+// --- keyframe recording ------------------------------------------------------
+
+// Opt-in: Auto-key alone must not hijack the drag (it defaults ON).
+void MoveTool::setRecordKeyframes(bool on) {
+    if (recordKeyframes_ == on)
+        return;
+    recordKeyframes_ = on;
+    if (!ctx_)
+        return;
+    // Settle an in-flight drag into its new mode, exactly like the transform
+    // tool's toggle does — one code path for UI and programmatic changes.
+    if (dragging_)
+        endPrimary(ToolEvent{});
+}
+
+bool MoveTool::canRecord() const {
+    if (!ctx_ || !ctx_->recording() || selectionScope_)
+        return false;
+    // Strictly OPT-IN, like the transform tool: an animated layer must not
+    // hijack the drag into key-writing unasked (the "move tool broken after
+    // keying" regression). Toggle off = pixels move, toggle on = keys.
+    return recordKeyframes_;
+}
+
+bool MoveTool::beginRecord(const Vec2 &at) {
+    if (!canRecord())
+        return false;
+    start_ = at;
+    dragging_ = true;
+    recording_ = true;
+    recordFrame_ = ctx_->doc()->currentFrame();
+    // Start from the pose the animation already holds, so a second drag at a
+    // later frame continues the move instead of restarting it from zero.
+    baseX_ = ctx_->recordedValue(ParamId::PositionX, recordFrame_);
+    baseY_ = ctx_->recordedValue(ParamId::PositionY, recordFrame_);
+    if (const AdjustmentLayer *a = ctx_->recordTarget()) {
+        freshX_ = !a->params().isAnimated(ParamId::PositionX);
+        freshY_ = !a->params().isAnimated(ParamId::PositionY);
+    } else {
+        freshX_ = freshY_ = false;
+    }
+    ctx_->beginParamRecord(QStringLiteral("Move"), recordFrame_);
+    // No key is written yet: a click that never moves must not leave one behind.
+    // endParamRecord() drops an unchanged record on the floor.
+    ctx_->setStatus(QStringLiteral("Recording the move · Esc reverts the drag"));
+    return true;
+}
+
+void MoveTool::recordOffset(double dx, double dy) {
+    ctx_->recordParam(ParamId::PositionX, baseX_ + dx, recordFrame_);
+    ctx_->recordParam(ParamId::PositionY, baseY_ + dy, recordFrame_);
+    ctx_->requestRebuild();
+}
+
+void MoveTool::closeRecordWithHint() {
+    const int frame = recordFrame_;
+    const bool wasFreshX = freshX_, wasFreshY = freshY_;
+    ctx_->endParamRecord();
+    if (!ctx_ || !(wasFreshX || wasFreshY))
+        return;
+    if (const AdjustmentLayer *a = ctx_->recordTarget()) {
+        const ParamBlock &b = a->params();
+        QStringList first;
+        if (wasFreshX && b.isAnimated(ParamId::PositionX))
+            first << QStringLiteral("Position X");
+        if (wasFreshY && b.isAnimated(ParamId::PositionY))
+            first << QStringLiteral("Position Y");
+        if (!first.isEmpty())
+            ctx_->setStatus(
+                QStringLiteral("Keyframes recorded — pixels untouched · first %1 key at frame %2 — Add-key an earlier frame to animate from there")
+                    .arg(first.join(QStringLiteral(", ")))
+                    .arg(frame));
+    }
+}
+
 void MoveTool::beginPrimary(const ToolEvent &e) {
     if (!ctx_ || dragging_)
         return;
-    if (!grabAt(e.docPos))
+    // Re-read the pose every press: the animation can have moved under the
+    // tool (a key dragged in the timeline) without the playhead changing.
+    refreshDisplayMapping();
+    // One space from here on: the lift, the erase, the stamp and the recorded
+    // Position deltas are all DEVICE space, so the press is captured there too.
+    const Vec2 at = toDevice(e.docPos);
+    if (!grabAt(e.docPos)) {
+        // Nothing to lift is not the same as nothing to animate: a blank cel can
+        // still carry keyframes.
+        beginRecord(at);
         return;
+    }
+    if (canRecord()) {
+        lifted_ = FloatRegion{}; // the pixels stay where they are
+        memento_ = TileMemento{};
+        beginRecord(at);
+        return;
+    }
     copying_ = (e.mods & Qt::AltModifier) != 0;
-    start_ = e.docPos;
+    start_ = at;
     dragging_ = true;
     if (copying_) {
         ctx_->setStatus(QStringLiteral("Copying the selection · release to drop"));
@@ -94,17 +231,26 @@ void MoveTool::beginPrimary(const ToolEvent &e) {
 void MoveTool::continuePrimary(const ToolEvent &e) {
     if (!dragging_)
         return;
-    int dx = int(std::lround(e.docPos.x - start_.x));
-    int dy = int(std::lround(e.docPos.y - start_.y));
+    const Vec2 p = toDevice(e.docPos);
+    double dx = std::lround(p.x - start_.x);
+    double dy = std::lround(p.y - start_.y);
     if (e.mods & Qt::ShiftModifier) {
         if (std::abs(dx) >= std::abs(dy))
             dy = 0;
         else
             dx = 0;
     }
-    if (dx == offsetX_ && dy == offsetY_)
+    if (recording_) {
+        if (int(dx) == offsetX_ && int(dy) == offsetY_)
+            return;
+        offsetX_ = int(dx);
+        offsetY_ = int(dy);
+        recordOffset(dx, dy);
         return;
-    applyOffset(dx, dy);
+    }
+    if (int(dx) == offsetX_ && int(dy) == offsetY_)
+        return;
+    applyOffset(int(dx), int(dy));
 }
 
 void MoveTool::applyOffset(int dx, int dy) {
@@ -138,6 +284,12 @@ void MoveTool::endPrimary(const ToolEvent &e) {
     if (!dragging_)
         return;
     dragging_ = false;
+    if (recording_) {
+        // One undo step for the whole drag; an unmoved click pushes nothing.
+        closeRecordWithHint();
+        resetState();
+        return;
+    }
     if (liftedOnce_ && device_ && !memento_.empty()) {
         ctx_->selection().invalidateOutline();
         ctx_->pushStrokeCommand(commandName(), device_, std::move(memento_));
@@ -150,6 +302,13 @@ void MoveTool::cancelPrimary() {
     if (!dragging_)
         return;
     dragging_ = false;
+    if (recording_) {
+        // Esc abandons the recorded keys: no undo entry, no pixel change.
+        ctx_->doc()->cancelParamRecord();
+        resetState();
+        ctx_->requestRebuild();
+        return;
+    }
     if (device_ && !memento_.empty())
         device_->store().restore(memento_);
     if (offsetX_ || offsetY_)
@@ -157,14 +316,44 @@ void MoveTool::cancelPrimary() {
     ctx_->selection().invalidateOutline();
     resetState();
     ctx_->notifySelectionChanged();
+    // The drag may have warmed the frame cache with the moved pixels: drop it,
+    // or the rebuild would serve them back after a revert.
+    if (ctx_->doc())
+        ctx_->doc()->frameCache().invalidate(ctx_->doc()->currentFrame());
     ctx_->requestRebuild();
 }
 
 bool MoveTool::nudge(int dx, int dy, Qt::KeyboardModifiers mods) {
     if (!ctx_ || dragging_)
         return false;
-    if (!grab(!ctx_->selection().isEmpty()))
-        return false;
+    // An arrow key moves the ink by N pixels ON SCREEN, so on a posed layer the
+    // device delta has to be the one that lands there - otherwise a nudged
+    // stroke drifts away from the key it was nudged with.
+    refreshDisplayMapping();
+    {
+        const Vec2 dev = toDeviceVector({double(dx), double(dy)});
+        dx = int(std::lround(dev.x));
+        dy = int(std::lround(dev.y));
+    }
+    if (!grab(!ctx_->selection().isEmpty())) {
+        // Arrows on a blank cel still nudge the animation.
+        if (!beginRecord({0.0, 0.0}))
+            return false;
+        copying_ = false;
+        recordOffset(dx, dy);
+        closeRecordWithHint();
+        resetState();
+        return true;
+    }
+    if (canRecord()) {
+        lifted_ = FloatRegion{};
+        memento_ = TileMemento{};
+        beginRecord({0.0, 0.0});
+        recordOffset(dx, dy);
+        closeRecordWithHint();
+        resetState();
+        return true;
+    }
     copying_ = (mods & Qt::AltModifier) != 0;
     applyOffset(dx, dy);
     const bool moved = liftedOnce_ && !memento_.empty();
@@ -225,6 +414,13 @@ QWidget *MoveTool::createOptionsWidget(QWidget *parent) {
     flipV->setToolTip(QStringLiteral("Mirror the selection vertically"));
     connect(flipV, &QToolButton::clicked, page, [this] { flip(false); });
     row->addWidget(flipV);
+
+    row->addWidget(InkOptions::separator(page));
+    auto *record = InkOptions::toggle(QStringLiteral("Record as keyframes"), recordKeyframes_, page);
+    record->setToolTip(QStringLiteral("With Auto-key on, whole-layer drags write Position "
+                                      "keyframes directly on the layer"));
+    connect(record, &QToolButton::toggled, page, [this](bool on) { setRecordKeyframes(on); });
+    row->addWidget(record);
 
     row->addWidget(InkOptions::separator(page));
     auto *hint = new QLabel(QStringLiteral("Alt drag copies · Shift locks the axis · Esc cancels"), page);

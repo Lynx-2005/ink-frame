@@ -1,4 +1,5 @@
 #include "ui/tools/InkPaintTool.h"
+#include "ui/InkDocument.h"
 #include "ui/InkOptionWidgets.h"
 #include "ui/tools/InkToolContext.h"
 #include <QComboBox>
@@ -78,7 +79,7 @@ void PaintToolBase::beginPrimary(const ToolEvent &e) {
         return;
     device_ = ctx_->editableDevice();
     if (!device_) {
-        ctx_->setStatus(QStringLiteral("Layer is locked or not paintable"));
+        ctx_->setStatus(ctx_->blockedHint());
         return;
     }
     strokePreset_ = ctx_->preset();
@@ -118,8 +119,14 @@ void PaintToolBase::continuePrimary(const ToolEvent &e) {
 void PaintToolBase::endPrimary(const ToolEvent &) {
     if (!stroking_)
         return;
+    opDirty_ = Rect{};
     op_->endStroke();
     stroking_ = false;
+    // endStroke() stamps its final dabs into opDirty_ (via dirtyAccum) but
+    // never marked them: flush here so the incremental path paints them.
+    // pushStrokeCommand() only repaints (no full rebuild), preserving them.
+    if (!opDirty_.isEmpty())
+        ctx_->markDirty(opDirty_);
     if (device_ && !memento_.empty())
         ctx_->pushStrokeCommand(strokeName(), device_, std::move(memento_));
     memento_ = TileMemento{};
@@ -135,6 +142,10 @@ void PaintToolBase::cancelPrimary() {
         device_->store().restore(memento_);
     memento_ = TileMemento{};
     device_ = nullptr;
+    // The stroke may have warmed the frame cache with uncommitted dabs: drop it
+    // before rebuilding, or the revert would serve them back.
+    if (ctx_->doc())
+        ctx_->doc()->frameCache().invalidate(ctx_->doc()->currentFrame());
     ctx_->requestRebuild();
 }
 

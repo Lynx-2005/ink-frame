@@ -110,7 +110,13 @@ inline void ViewConverter::recalculate() {
 
 inline void ViewConverter::fit(double margin) {
     margin = std::clamp(margin, 0.05, 1.0);
-    zoom_ = std::min(widgetW_ / docW_, widgetH_ / docH_) * margin;
+    // Fit the ROTATED bounding box: the raw doc rect overflows the widget at
+    // every angle that is not a multiple of 90 degrees.
+    const double rad = rotationDeg_ * M_PI / 180.0;
+    const double c = std::abs(std::cos(rad)), s = std::abs(std::sin(rad));
+    const double w = docW_ * c + docH_ * s;
+    const double h = docW_ * s + docH_ * c;
+    zoom_ = std::min(widgetW_ / w, widgetH_ / h) * margin;
     zoom_ = std::clamp(zoom_, 0.02, 64.0);
     pan_ = {0, 0};
     recalculate();
